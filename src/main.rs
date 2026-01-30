@@ -16,7 +16,12 @@ enum Commands {
     /// List all chat sessions with numbered indices
     List,
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
-    Delete { indices: String },
+    Delete {
+        indices: String,
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -32,7 +37,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::List => list_sessions()?,
-        Commands::Delete { indices } => delete_sessions(&indices)?,
+        Commands::Delete { indices, yes } => delete_sessions(&indices, yes)?,
     }
 
     Ok(())
@@ -83,7 +88,7 @@ fn list_sessions() -> Result<()> {
     Ok(())
 }
 
-fn delete_sessions(indices: &str) -> Result<()> {
+fn delete_sessions(indices: &str, skip_confirm: bool) -> Result<()> {
     let sessions = get_sessions()?;
     
     let indices: Vec<usize> = indices
@@ -99,11 +104,29 @@ fn delete_sessions(indices: &str) -> Result<()> {
         }
     }
 
+    println!("\nSessions to delete:");
+    for &idx in &indices {
+        let session = &sessions[idx];
+        println!("  [{}] {} | {}", idx, session.time_ago, session.preview);
+    }
+
+    if !skip_confirm {
+        print!("\nDelete these {} session(s)? (y/n): ", indices.len());
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
     println!("\nDeleting {} session(s)...", indices.len());
     
     for &idx in &indices {
         let session = &sessions[idx];
-        println!("  [{}] {}", idx, session.preview);
         
         let output = Command::new("kiro-cli")
             .args(["chat", "--delete-session", &session.id])
