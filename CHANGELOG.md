@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-01-31
+
+### Added
+- Custom session naming with `ksm name <index> <name>` command
+- Session tagging system with `ksm tag <index> <tags...>` command
+- Tag removal with `ksm untag <index> <tags...>` command
+- Manual metadata cleanup with `ksm clean-metadata` command
+- Automatic silent cleanup of stale metadata on list operations
+- Metadata storage in `~/.ksm/metadata.json`
+
+### Changed
+- List command now displays custom names and tags when available
+- Custom names replace default session preview in list output
+- Tags displayed as `[tag]` prefixes before session name/preview
+
 ## [0.1.1] - 2026-01-31
 
 ### Added
