@@ -1,0 +1,28 @@
+# IDE Files
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+*.launch
+*.ipr
+*.iws
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Python Specific
+__pycache__
+
+# Generated Cache Files (data directory)
+/data/*.json
+!/data/.gitkeep
+
+# Kiro directories
+.kiro/
+.kiro-local/
+
+# Rust
+/target
