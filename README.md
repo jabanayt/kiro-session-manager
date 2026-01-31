@@ -31,7 +31,7 @@ ksm list
 
 Output:
 ```
-[0] 2 minutes ago | 10 msgs | I have an issue with...
+[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning
 [1] 5 minutes ago | 1 msgs | example2
 [2] 10 minutes ago | 1 msgs | example1
 ```
@@ -44,6 +44,24 @@ ksm delete 1
 # Delete multiple sessions (comma or space separated)
 ksm delete 1,2,3
 ksm delete 1 2 3
+
+# Skip confirmation prompt
+ksm delete 1 -y
+```
+
+### Name and tag sessions
+```bash
+# Set a custom name for a session
+ksm name 0 "Project Planning"
+
+# Add tags to a session
+ksm tag 0 work urgent
+
+# Remove tags from a session
+ksm untag 0 urgent
+
+# Clean up metadata for deleted sessions
+ksm clean-metadata
 ```
 
 ## Requirements
@@ -56,3 +74,4 @@ ksm delete 1 2 3
 - `clap` - CLI argument parsing
 - `regex` - Parse kiro-cli output
 - `anyhow` - Error handling
+- `serde` + `serde_json` - Metadata serialization
