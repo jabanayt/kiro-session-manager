@@ -95,9 +95,38 @@ ksm r -n "Project Planning"
 - kiro-cli installed and in PATH
 - sqlite3 installed (for resume functionality)
 
+## Configuration
+
+KSM uses `~/.ksm/config.toml` to configure metadata storage location. The config file is created automatically on first run.
+
+### Storage Modes
+
+**Global (default):** Metadata stored in `~/.ksm/metadata.json`, shared across all projects
+```toml
+metadata_storage = "global"
+```
+
+**Local:** Metadata stored per-directory in `.kiro/ksm-metadata.json`
+```toml
+metadata_storage = "local"
+```
+
+**Custom:** Metadata stored at a custom path
+```toml
+metadata_storage = "custom"
+custom_path = "/path/to/metadata.json"
+```
+
+### Why Configure Storage?
+
+- **Global mode:** Convenient for managing all sessions in one place
+- **Local mode:** Isolates metadata per project, prevents cross-project interference
+- **Custom mode:** Store metadata wherever you prefer (network drive, Dropbox, etc.)
+
 ## Dependencies
 
 - `clap` - CLI argument parsing
 - `regex` - Parse kiro-cli output
 - `anyhow` - Error handling
 - `serde` + `serde_json` - Metadata serialization
+- `toml` - Configuration file parsing

@@ -13,9 +13,11 @@ pub fn set_name(index: usize, name: &str) -> Result<()> {
     }
     
     let session = &sessions[index];
-    metadata.entry(session.id.clone())
-        .or_default()
-        .name = Some(name.to_string());
+    let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
+    
+    let entry = metadata.entry(session.id.clone()).or_default();
+    entry.name = Some(name.to_string());
+    entry.directory = Some(current_dir);
     
     save_metadata(&metadata)?;
     println!("Set name for session [{}]: {}", index, name);
@@ -31,7 +33,10 @@ pub fn add_tags(index: usize, tags: &[String]) -> Result<()> {
     }
     
     let session = &sessions[index];
+    let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
+    
     let entry = metadata.entry(session.id.clone()).or_default();
+    entry.directory = Some(current_dir);
     
     for tag in tags {
         entry.tags.insert(tag.clone());

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-02-01
+
+### Added
+- Configuration file support: `~/.ksm/config.toml` for customizable metadata storage
+- Three storage modes: `global` (default), `local` (per-directory), `custom` (user path)
+- Directory tracking in metadata to prevent cross-project interference
+- `toml` dependency for configuration file parsing
+
+### Fixed
+- **Critical bug:** Running `ksm list` in different directories no longer wipes metadata from other projects
+- Metadata cleanup now only affects sessions from the current directory
+- Added safety check to prevent data loss when kiro-cli fails or returns no sessions
+
+### Changed
+- Metadata schema now includes optional `directory` field (backward compatible)
+- Cleanup logic is directory-aware and only removes stale entries from current project
+- Config file auto-generated on first run with helpful comments
+
+### Technical
+- Added `config.rs` module for TOML configuration loading
+- Updated `metadata_path()` to support configurable storage locations
+- Enhanced `cleanup_stale_metadata()` with directory filtering
+- Legacy metadata entries without directory field remain supported
+
 ## [0.1.5] - 2026-02-01
 
 ### Added

@@ -58,8 +58,10 @@ pub fn list_sessions() -> Result<()> {
     let sessions = get_sessions()?;
     let mut metadata = load_metadata()?;
     
-    // Silent cleanup of stale metadata
-    cleanup_stale_metadata(&mut metadata, &sessions)?;
+    // Only cleanup if we have sessions (directory-aware, but avoid data loss on kiro-cli failure)
+    if !sessions.is_empty() {
+        cleanup_stale_metadata(&mut metadata, &sessions)?;
+    }
 
     if sessions.is_empty() {
         println!("No sessions found.");

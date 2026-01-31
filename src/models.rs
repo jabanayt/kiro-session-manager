@@ -14,4 +14,6 @@ pub struct SessionMetadata {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "HashSet::is_empty", default)]
     pub tags: HashSet<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
 }

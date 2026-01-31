@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod config;
 mod kiro;
 mod models;
 mod storage;
