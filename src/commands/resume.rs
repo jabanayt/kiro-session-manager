@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::commands::list::display_sessions_with_metadata;
+use crate::commands::list::{display_sessions_with_metadata, format_session_display};
 use crate::kiro::get_sessions;
 use crate::storage::{cleanup_stale_metadata, load_metadata};
 
@@ -117,8 +117,7 @@ pub fn resume_by_tag(tag: &str) -> Result<()> {
             // Multiple matches - show picker
             println!("\nSessions with tag '{}':\n", tag);
             for (idx, (_orig_idx, session)) in matches.iter().enumerate() {
-                let meta = metadata.get(&session.id).unwrap();
-                let display = meta.name.as_deref().unwrap_or(&session.preview);
+                let display = format_session_display(session, &metadata, false);
                 println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
             }
             

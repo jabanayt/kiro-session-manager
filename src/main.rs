@@ -21,8 +21,9 @@ enum Commands {
     /// List all chat sessions with numbered indices
     List,
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
+    #[command(alias = "d")]
     Delete {
-        indices: String,
+        indices: Option<Vec<usize>>,
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
@@ -66,7 +67,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::List => list::list_sessions()?,
-        Commands::Delete { indices, yes } => delete::delete_sessions(&indices, yes)?,
+        Commands::Delete { indices, yes } => {
+            match indices {
+                Some(idx) => delete::delete_sessions(Some(idx), yes)?,
+                None => delete::delete_sessions(None, yes)?,
+            }
+        }
         Commands::Name { index, name } => metadata::set_name(index, &name)?,
         Commands::Tag { index, tags } => metadata::add_tags(index, &tags)?,
         Commands::Untag { index, tags } => metadata::remove_tags(index, &tags)?,

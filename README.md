@@ -38,15 +38,21 @@ Output:
 
 ### Delete sessions by index
 ```bash
+# Interactive mode - shows list and prompts for selection
+ksm delete
+ksm d
+
 # Delete single session
 ksm delete 1
+ksm d 1
 
 # Delete multiple sessions (comma or space separated)
 ksm delete 1,2,3
-ksm delete 1 2 3
+ksm d 1 2 3
 
 # Skip confirmation prompt
 ksm delete 1 -y
+ksm d 1,2,3 -y
 ```
 
 ### Name and tag sessions
