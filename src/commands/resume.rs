@@ -117,7 +117,7 @@ pub fn resume_by_tag(tag: &str) -> Result<()> {
             // Multiple matches - show picker
             println!("\nSessions with tag '{}':\n", tag);
             for (idx, (_orig_idx, session)) in matches.iter().enumerate() {
-                let display = format_session_display(session, &metadata, false);
+                let display = format_session_display(session, &metadata, &sessions, false);
                 println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
             }
             

@@ -3,11 +3,12 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 mod config;
+mod database;
 mod kiro;
 mod models;
 mod storage;
 
-use commands::{delete, list, metadata, resume};
+use commands::{delete, detect, link, list, metadata, resume, unlink};
 
 #[derive(Parser)]
 #[command(name = "ksm")]
@@ -20,7 +21,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// List all chat sessions with numbered indices
-    List,
+    List {
+        /// Show full parent chain with details
+        #[arg(long)]
+        show_parents: bool,
+    },
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
     #[command(alias = "d")]
     Delete {
@@ -61,13 +66,30 @@ enum Commands {
         #[arg(short, long)]
         name: Option<String>,
     },
+    /// Link a child session to a parent session
+    Link {
+        /// Child session index
+        child_index: usize,
+        /// Parent session index
+        parent_index: usize,
+    },
+    /// Unlink a child session from its parent
+    Unlink {
+        /// Session index to unlink
+        index: usize,
+        /// Keep inherited metadata (name and tags)
+        #[arg(short, long)]
+        keep: bool,
+    },
+    /// Auto-detect and link compacted sessions to their parents
+    DetectLinks,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::List => list::list_sessions()?,
+        Commands::List { show_parents } => list::list_sessions(show_parents)?,
         Commands::Delete { indices, yes } => {
             match indices {
                 Some(idx) => delete::delete_sessions(Some(idx), yes)?,
@@ -90,6 +112,15 @@ fn main() -> Result<()> {
             } else {
                 resume::interactive_resume()?;
             }
+        }
+        Commands::Link { child_index, parent_index } => {
+            link::link_sessions(child_index, parent_index)?;
+        }
+        Commands::Unlink { index, keep } => {
+            unlink::unlink_session(index, keep)?;
+        }
+        Commands::DetectLinks => {
+            detect::detect_continuations()?;
         }
     }
 

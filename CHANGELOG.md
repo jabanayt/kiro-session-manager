@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-02-01
+
+### Added
+- **Session continuation tracking:** Preserve metadata across Kiro compaction events
+- `ksm link <child> <parent>` - Manually link child session to parent
+- `ksm unlink <index>` - Remove parent relationship (with `--keep` flag to preserve metadata)
+- `ksm detect-links` - Auto-detect and interactively link compacted sessions
+- `--show-parents` flag for `ksm list` - Display full parent chain with details
+- Auto-detection of compacted sessions using Kiro's Compact tag
+- Config option `auto_detect_continuations` to enable/disable auto-linking (default: false)
+- Database helper module (`src/database.rs`) for querying Kiro's SQLite database
+- Parent sessions now hidden from default list view (shown with `--show-parents`)
+
+### Changed
+- Session list now filters out parent sessions by default
+- Child sessions display inline parent indicator: `↳ from [X]`
+- Link command skips warning if child metadata matches parent
+- Config file automatically migrates to include new fields
+
+### Technical
+- Added `parent_session_id` field to `SessionMetadata`
+- Added `manually_unlinked` flag to prevent auto-detection from re-linking
+- Implemented linear chain validation (one parent, one child per session)
+- Database queries for Compact tag detection and timestamp matching
+- Shared detection logic between `list` and `detect-links` commands
+- Added `Clone` derive to `Session` struct
+
+### Documentation
+- Created ADR-010 documenting session continuation tracking design
+- Updated README with link/unlink/detect-links commands
+- Added configuration section for auto-detection toggle
+
 ## [0.1.6] - 2026-02-01
 
 ### Added

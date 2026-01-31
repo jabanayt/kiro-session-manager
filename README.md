@@ -89,11 +89,38 @@ ksm r -t work
 ksm r -n "Project Planning"
 ```
 
+### Session continuation tracking
+```bash
+# Link a child session to its parent (preserves metadata across compaction)
+ksm link 1 3
+
+# Unlink a session from its parent
+ksm unlink 1
+
+# Unlink but keep inherited metadata
+ksm unlink 1 --keep
+
+# Auto-detect and link compacted sessions
+ksm detect-links
+
+# Show full parent chain
+ksm list --show-parents
+```
+
+When Kiro compacts a session (via `/compact` or automatically), it creates a new session. KSM can track these parent-child relationships to preserve your names and tags across compactions.
+
+**Features:**
+- Automatic detection of compacted sessions (via Kiro's Compact tag)
+- Manual linking with `ksm link`
+- Parent sessions hidden from default list view
+- Full lineage visible with `--show-parents`
+- Metadata inheritance from parent to child
+
 ## Requirements
 
 - Rust 1.70+
 - kiro-cli installed and in PATH
-- sqlite3 installed (for resume functionality)
+- sqlite3 installed (for resume and session tracking functionality)
 
 ## Configuration
 
@@ -122,6 +149,18 @@ custom_path = "/path/to/metadata.json"
 - **Global mode:** Convenient for managing all sessions in one place
 - **Local mode:** Isolates metadata per project, prevents cross-project interference
 - **Custom mode:** Store metadata wherever you prefer (network drive, Dropbox, etc.)
+
+### Auto-Detection
+
+KSM can automatically detect when Kiro compacts a session and link the new session to its parent:
+
+```toml
+# Enable automatic detection of compacted sessions
+# Only sessions with Kiro's Compact tag will be auto-linked
+auto_detect_continuations = false  # Default: false
+```
+
+Set to `true` to enable automatic linking on `ksm list`. Use `ksm detect-links` for manual detection.
 
 ## Dependencies
 

@@ -58,7 +58,7 @@ fn delete_by_indices(sessions: &[Session], indices: &[usize], skip_confirm: bool
     println!("\nSessions to delete:");
     for &idx in indices {
         let session = &sessions[idx];
-        let display = format_session_display(session, &metadata, true);
+        let display = format_session_display(session, &metadata, &sessions, true);
         println!("  [{}] {} | {}", idx, session.time_ago, display);
     }
 
