@@ -11,7 +11,7 @@ Kiro-CLI creates a new session every time you quit, leading to:
 
 ## Solution
 
-`ksm` provides a simple interface to list and delete sessions by index numbers.
+`ksm` provides a simple interface to list, delete, tag, and resume sessions by index numbers.
 
 ## Installation
 
@@ -64,10 +64,30 @@ ksm untag 0 urgent
 ksm clean-metadata
 ```
 
+### Resume sessions
+```bash
+# Interactive picker - shows list, prompts for number
+ksm resume
+ksm r
+
+# Resume by index
+ksm r 0
+
+# Resume most recent session
+ksm r -l
+
+# Resume by tag (picker if multiple matches)
+ksm r -t work
+
+# Resume by exact name
+ksm r -n "Project Planning"
+```
+
 ## Requirements
 
 - Rust 1.70+
 - kiro-cli installed and in PATH
+- sqlite3 installed (for resume functionality)
 
 ## Dependencies
 

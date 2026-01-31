@@ -1,20 +1,14 @@
 use anyhow::Result;
+use std::collections::HashMap;
 
 use crate::kiro::get_sessions;
+use crate::models::{Session, SessionMetadata};
 use crate::storage::{cleanup_stale_metadata, load_metadata};
 
-pub fn list_sessions() -> Result<()> {
-    let sessions = get_sessions()?;
-    let mut metadata = load_metadata()?;
-    
-    // Silent cleanup of stale metadata
-    cleanup_stale_metadata(&mut metadata, &sessions)?;
-
-    if sessions.is_empty() {
-        println!("No sessions found.");
-        return Ok(());
-    }
-
+pub fn display_sessions_with_metadata(
+    sessions: &[Session],
+    metadata: &HashMap<String, SessionMetadata>,
+) {
     println!("\nKiro Chat Sessions:\n");
     for (idx, session) in sessions.iter().enumerate() {
         let meta = metadata.get(&session.id);
@@ -46,6 +40,21 @@ pub fn list_sessions() -> Result<()> {
         
         println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
     }
+}
+
+pub fn list_sessions() -> Result<()> {
+    let sessions = get_sessions()?;
+    let mut metadata = load_metadata()?;
+    
+    // Silent cleanup of stale metadata
+    cleanup_stale_metadata(&mut metadata, &sessions)?;
+
+    if sessions.is_empty() {
+        println!("No sessions found.");
+        return Ok(());
+    }
+
+    display_sessions_with_metadata(&sessions, &metadata);
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
     Ok(())

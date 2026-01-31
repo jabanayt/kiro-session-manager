@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-01-31
+
+### Added
+- Resume command with multiple modes: `ksm resume` or `ksm r`
+- Resume by index: `ksm r 0` to resume specific session
+- Resume by tag: `ksm r -t work` with picker for multiple matches
+- Resume by name: `ksm r -n "Session Name"` for exact match
+- Resume last session: `ksm r -l` wraps kiro-cli --resume
+- Interactive resume picker with number input
+
+### Technical
+- Database timestamp manipulation to control session resume order
+- Reuses display logic from list command for consistency
+- Requires sqlite3 installed for database operations
+
 ## [0.1.3] - 2026-01-31
 
 ### Changed
