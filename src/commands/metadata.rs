@@ -1,10 +1,11 @@
 use anyhow::Result;
 use std::collections::HashSet;
+use std::io::{self, Write};
 
 use crate::kiro::get_sessions;
-use crate::storage::{load_metadata, save_metadata};
+use crate::storage::{load_metadata, save_metadata, get_full_chain, get_ordered_chain};
 
-pub fn set_name(index: usize, name: &str) -> Result<()> {
+pub fn set_name(index: usize, name: &str, apply_to_chain: bool) -> Result<()> {
     let sessions = get_sessions()?;
     let mut metadata = load_metadata()?;
     
@@ -15,12 +16,59 @@ pub fn set_name(index: usize, name: &str) -> Result<()> {
     let session = &sessions[index];
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
     
-    let entry = metadata.entry(session.id.clone()).or_default();
-    entry.name = Some(name.to_string());
-    entry.directory = Some(current_dir);
+    let target_sessions = if apply_to_chain {
+        // Check if session is part of a chain
+        let chain = get_full_chain(&session.id, &metadata, &sessions);
+        
+        if chain.len() > 1 {
+            // Show chain and prompt for confirmation
+            let ordered = get_ordered_chain(&session.id, &metadata, &sessions);
+            
+            print!("\nSession [{}] is part of a chain: ", index);
+            
+            for (i, chain_id) in ordered.iter().enumerate() {
+                if let Some(chain_idx) = sessions.iter().position(|s| &s.id == chain_id) {
+                    if i > 0 {
+                        print!(" → ");
+                    }
+                    print!("[{}]", chain_idx);
+                }
+            }
+            println!();
+            
+            print!("\nApply name \"{}\" to entire chain? (y/n): ", name);
+            io::stdout().flush()?;
+            
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            
+            if input.trim().eq_ignore_ascii_case("y") {
+                chain
+            } else {
+                vec![session.id.clone()]
+            }
+        } else {
+            vec![session.id.clone()]
+        }
+    } else {
+        vec![session.id.clone()]
+    };
+    
+    // Apply name to selected sessions
+    for session_id in &target_sessions {
+        let entry = metadata.entry(session_id.clone()).or_default();
+        entry.name = Some(name.to_string());
+        entry.directory = Some(current_dir.clone());
+    }
     
     save_metadata(&metadata)?;
-    println!("Set name for session [{}]: {}", index, name);
+    
+    if target_sessions.len() > 1 {
+        println!("\n✓ Set name for {} sessions: {}", target_sessions.len(), name);
+    } else {
+        println!("Set name for session [{}]: {}", index, name);
+    }
+    
     Ok(())
 }
 
@@ -35,15 +83,63 @@ pub fn add_tags(index: usize, tags: &[String]) -> Result<()> {
     let session = &sessions[index];
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
     
-    let entry = metadata.entry(session.id.clone()).or_default();
-    entry.directory = Some(current_dir);
+    // Check if session is part of a chain
+    let chain = get_full_chain(&session.id, &metadata, &sessions);
     
-    for tag in tags {
-        entry.tags.insert(tag.clone());
+    let target_sessions = if chain.len() > 1 {
+        // Session is part of a chain
+        let ordered = get_ordered_chain(&session.id, &metadata, &sessions);
+        
+        print!("\nSession [{}] is part of a chain: ", index);
+        
+        for (i, chain_id) in ordered.iter().enumerate() {
+            if let Some(chain_idx) = sessions.iter().position(|s| &s.id == chain_id) {
+                if i > 0 {
+                    print!(" → ");
+                }
+                print!("[{}]", chain_idx);
+            }
+        }
+        println!("\n");
+        
+        println!("Apply tags to:");
+        println!("  1. Only [{}]", index);
+        println!("  2. Entire chain");
+        print!("Choice (1-2) [2]: ");
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let choice = input.trim();
+        let choice = if choice.is_empty() { "2" } else { choice };
+        
+        match choice {
+            "1" => vec![session.id.clone()],
+            "2" => chain,
+            _ => anyhow::bail!("Invalid choice"),
+        }
+    } else {
+        vec![session.id.clone()]
+    };
+    
+    // Apply tags to selected sessions
+    for session_id in &target_sessions {
+        let entry = metadata.entry(session_id.clone()).or_default();
+        entry.directory = Some(current_dir.clone());
+        
+        for tag in tags {
+            entry.tags.insert(tag.clone());
+        }
     }
     
     save_metadata(&metadata)?;
-    println!("Added tags to session [{}]: {}", index, tags.join(", "));
+    
+    if target_sessions.len() > 1 {
+        println!("\n✓ Added tags to {} sessions: {}", target_sessions.len(), tags.join(", "));
+    } else {
+        println!("Added tags to session [{}]: {}", index, tags.join(", "));
+    }
+    
     Ok(())
 }
 
@@ -56,14 +152,61 @@ pub fn remove_tags(index: usize, tags: &[String]) -> Result<()> {
     }
     
     let session = &sessions[index];
-    if let Some(entry) = metadata.get_mut(&session.id) {
-        for tag in tags {
-            entry.tags.remove(tag);
+    
+    // Check if session is part of a chain
+    let chain = get_full_chain(&session.id, &metadata, &sessions);
+    
+    let target_sessions = if chain.len() > 1 {
+        // Session is part of a chain
+        let ordered = get_ordered_chain(&session.id, &metadata, &sessions);
+        
+        print!("\nSession [{}] is part of a chain: ", index);
+        
+        for (i, chain_id) in ordered.iter().enumerate() {
+            if let Some(chain_idx) = sessions.iter().position(|s| &s.id == chain_id) {
+                if i > 0 {
+                    print!(" → ");
+                }
+                print!("[{}]", chain_idx);
+            }
         }
-        save_metadata(&metadata)?;
-        println!("Removed tags from session [{}]: {}", index, tags.join(", "));
+        println!("\n");
+        
+        println!("Remove tags from:");
+        println!("  1. Only [{}]", index);
+        println!("  2. Entire chain");
+        print!("Choice (1-2) [2]: ");
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let choice = input.trim();
+        let choice = if choice.is_empty() { "2" } else { choice };
+        
+        match choice {
+            "1" => vec![session.id.clone()],
+            "2" => chain,
+            _ => anyhow::bail!("Invalid choice"),
+        }
     } else {
-        println!("No metadata found for session [{}]", index);
+        vec![session.id.clone()]
+    };
+    
+    // Remove tags from selected sessions
+    for session_id in &target_sessions {
+        if let Some(entry) = metadata.get_mut(session_id) {
+            for tag in tags {
+                entry.tags.remove(tag);
+            }
+        }
+    }
+    
+    save_metadata(&metadata)?;
+    
+    if target_sessions.len() > 1 {
+        println!("\n✓ Removed tags from {} sessions: {}", target_sessions.len(), tags.join(", "));
+    } else {
+        println!("Removed tags from session [{}]: {}", index, tags.join(", "));
     }
     
     Ok(())

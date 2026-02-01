@@ -81,3 +81,116 @@ pub fn cleanup_stale_metadata(metadata: &mut HashMap<String, SessionMetadata>, s
     
     Ok(())
 }
+
+/// Get all session IDs in a chain (both parents and children)
+/// Returns Vec with the session itself, all parents, and all children
+/// Only includes sessions that actually exist in the sessions list
+pub fn get_full_chain(
+    session_id: &str,
+    metadata: &HashMap<String, SessionMetadata>,
+    sessions: &[Session],
+) -> Vec<String> {
+    let session_ids: std::collections::HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
+    let mut chain = vec![session_id.to_string()];
+    
+    // Walk up to find all parents
+    let mut current = session_id.to_string();
+    while let Some(meta) = metadata.get(&current) {
+        if let Some(parent_id) = &meta.parent_session_id {
+            if session_ids.contains(parent_id.as_str()) {
+                chain.push(parent_id.clone());
+                current = parent_id.clone();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    // Walk down to find all children
+    fn find_children(
+        parent_id: &str,
+        metadata: &HashMap<String, SessionMetadata>,
+        chain: &mut Vec<String>,
+        session_ids: &std::collections::HashSet<&str>,
+    ) {
+        for (id, meta) in metadata {
+            if let Some(pid) = &meta.parent_session_id {
+                if pid == parent_id && !chain.contains(id) && session_ids.contains(id.as_str()) {
+                    chain.push(id.clone());
+                    find_children(id, metadata, chain, session_ids);
+                }
+            }
+        }
+    }
+    
+    find_children(session_id, metadata, &mut chain, &session_ids);
+    
+    chain
+}
+
+/// Get ordered chain for display (youngest child → oldest parent)
+pub fn get_ordered_chain(
+    session_id: &str,
+    metadata: &HashMap<String, SessionMetadata>,
+    sessions: &[Session],
+) -> Vec<String> {
+    let chain = get_full_chain(session_id, metadata, sessions);
+    
+    if chain.len() <= 1 {
+        return chain;
+    }
+    
+    let mut ordered = Vec::new();
+    
+    // Find the youngest child (no one points to it as parent)
+    let youngest = chain.iter().find(|id| {
+        !metadata.values().any(|m| m.parent_session_id.as_ref() == Some(id))
+    }).unwrap_or(&session_id.to_string()).clone();
+    
+    // Walk up the parent chain from youngest
+    ordered.push(youngest.clone());
+    let mut current = youngest;
+    while let Some(meta) = metadata.get(&current) {
+        if let Some(parent_id) = &meta.parent_session_id {
+            if chain.contains(parent_id) {
+                ordered.push(parent_id.clone());
+                current = parent_id.clone();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    ordered
+}
+
+/// Relink sessions around a deleted session to maintain chain integrity
+/// Updates child's parent_session_id to point to grandparent
+pub fn relink_around_session(
+    session_id: &str,
+    metadata: &mut HashMap<String, SessionMetadata>,
+) -> Result<()> {
+    // Find the parent of the session being deleted
+    let parent_id = metadata
+        .get(session_id)
+        .and_then(|m| m.parent_session_id.clone());
+    
+    // Find any child that points to this session
+    let child_id = metadata
+        .iter()
+        .find(|(_, m)| m.parent_session_id.as_ref() == Some(&session_id.to_string()))
+        .map(|(id, _)| id.clone());
+    
+    // If there's a child, update its parent_session_id
+    if let Some(child) = child_id {
+        if let Some(child_meta) = metadata.get_mut(&child) {
+            child_meta.parent_session_id = parent_id;
+        }
+    }
+    
+    Ok(())
+}

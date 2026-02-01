@@ -38,6 +38,9 @@ enum Commands {
     Name {
         index: usize,
         name: String,
+        /// Apply name to entire chain
+        #[arg(long)]
+        chain: bool,
     },
     /// Add tags to a session
     Tag {
@@ -100,7 +103,7 @@ fn main() -> Result<()> {
                 None => delete::delete_sessions(None, yes)?,
             }
         }
-        Commands::Name { index, name } => metadata::set_name(index, &name)?,
+        Commands::Name { index, name, chain } => metadata::set_name(index, &name, chain)?,
         Commands::Tag { index, tags } => metadata::add_tags(index, &tags)?,
         Commands::Untag { index, tags } => metadata::remove_tags(index, &tags)?,
         Commands::CleanMetadata => metadata::clean_metadata()?,

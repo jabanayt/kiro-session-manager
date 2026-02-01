@@ -126,15 +126,12 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
                 if let Some(parent_id) = &meta.parent_session_id {
                     if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
                         let parent = &sessions[parent_idx];
-                        let parent_meta = metadata.get(parent_id);
                         
-                        let parent_name = parent_meta
-                            .and_then(|m| m.name.as_ref())
-                            .map(|n| format!("\"{}\"", n))
-                            .unwrap_or_else(|| format!("\"{}\"", parent.preview));
+                        // Use format_session_display to show tags and name
+                        let parent_display = format_session_display(parent, &metadata, &sessions, false, false);
                         
                         let indent = "    ".repeat(depth);
-                        println!("{}\x1b[36m↳ from [{}]\x1b[0m {} ({})", indent, parent_idx, parent_name, parent.time_ago);
+                        println!("{}\x1b[36m↳ from [{}]\x1b[0m {} ({})", indent, parent_idx, parent_display, parent.time_ago);
                         current_id = parent_id.clone();
                         depth += 1;
                     } else {

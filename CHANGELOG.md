@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-02-02
+
+### Added
+- **Chain-aware delete:** Three options when deleting chained sessions
+  - Delete only selected session (relinks around it)
+  - Delete session and all parents
+  - Delete entire chain
+- **Chain-aware tag/untag:** Option to apply tags to entire chain or single session
+- **Name --chain flag:** Apply name to entire chain with confirmation prompt
+- Chain display shows ordered arrows ([1] → [2] → [3]) across all commands
+
+### Changed
+- Parent tags now visible in `--show-parents` view
+- Chain operations default to safer/more convenient options
+
+### Fixed
+- Stale metadata no longer included in chain operations
+
+### Technical
+- Added `get_full_chain()` helper to find all sessions in a chain
+- Added `get_ordered_chain()` helper for consistent chain display
+- Added `relink_around_session()` to maintain chain integrity on deletion
+- Chain filtering now only includes sessions that actually exist
+
 ## [0.1.9] - 2026-02-01
 
 ### Changed

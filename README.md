@@ -68,17 +68,31 @@ ksm delete 1 -y
 ksm d 1,2,3 -y
 ```
 
+**Chain-aware deletion:** When deleting a session that's part of a chain, you'll be offered three options:
+1. Delete only the selected session (relinks around it to maintain chain)
+2. Delete the session and all its parents
+3. Delete the entire chain
+
 ### Name and tag sessions
 ```bash
 # Set a custom name for a session
 ksm name 0 "Project Planning"
+
+# Apply name to entire chain (if session is part of a chain)
+ksm name 0 "Project Planning" --chain
 
 # Add tags to a session
 ksm tag 0 work urgent
 
 # Remove tags from a session
 ksm untag 0 urgent
+```
 
+**Chain-aware tagging:** When tagging or untagging a session that's part of a chain, you'll be offered two options:
+1. Apply only to the selected session
+2. Apply to entire chain (default)
+
+```bash
 # Clean up metadata for deleted sessions
 ksm clean-metadata
 ```
