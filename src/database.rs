@@ -4,16 +4,12 @@ use std::process::Command;
 
 use crate::models::Session;
 
-/// Check if a session has the Compact tag (indicating it was created from compaction)
-pub fn has_compact_tag(session_id: &str) -> Result<bool> {
+/// Execute a SQLite query and return the output
+fn query_db(sql: &str) -> Result<String> {
     let db_path = get_db_path()?;
-    
     let output = Command::new("sqlite3")
         .arg(&db_path)
-        .arg(format!(
-            "SELECT json_extract(value, '$.latest_summary[1].message_meta_tags') FROM conversations_v2 WHERE conversation_id='{}';",
-            session_id
-        ))
+        .arg(sql)
         .output()
         .context("Failed to execute sqlite3")?;
     
@@ -21,30 +17,26 @@ pub fn has_compact_tag(session_id: &str) -> Result<bool> {
         anyhow::bail!("Failed to query database: {}", String::from_utf8_lossy(&output.stderr));
     }
     
-    let result = String::from_utf8_lossy(&output.stdout);
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Check if a session has the Compact tag (indicating it was created from compaction)
+pub fn has_compact_tag(session_id: &str) -> Result<bool> {
+    let result = query_db(&format!(
+        "SELECT json_extract(value, '$.latest_summary[1].message_meta_tags') FROM conversations_v2 WHERE conversation_id='{}';",
+        session_id
+    ))?;
     Ok(result.contains("Compact"))
 }
 
 /// Get session timestamps (created_at, updated_at) in milliseconds
 pub fn get_session_timestamps(session_id: &str) -> Result<(i64, i64)> {
-    let db_path = get_db_path()?;
+    let result = query_db(&format!(
+        "SELECT created_at, updated_at FROM conversations_v2 WHERE conversation_id='{}';",
+        session_id
+    ))?;
     
-    let output = Command::new("sqlite3")
-        .arg(&db_path)
-        .arg(format!(
-            "SELECT created_at, updated_at FROM conversations_v2 WHERE conversation_id='{}';",
-            session_id
-        ))
-        .output()
-        .context("Failed to execute sqlite3")?;
-    
-    if !output.status.success() {
-        anyhow::bail!("Failed to query database: {}", String::from_utf8_lossy(&output.stderr));
-    }
-    
-    let result = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = result.trim().split('|').collect();
-    
     if parts.len() != 2 {
         anyhow::bail!("Unexpected database response format");
     }
@@ -55,43 +47,77 @@ pub fn get_session_timestamps(session_id: &str) -> Result<(i64, i64)> {
     Ok((created_at, updated_at))
 }
 
-/// Find potential parent sessions for a child session
-/// Returns list of parent session IDs that match timing criteria
-pub fn find_potential_parents(child_id: &str, sessions: &[Session]) -> Result<Vec<String>> {
-    let (child_created, _) = get_session_timestamps(child_id)?;
+/// Extract message IDs from a session's history
+pub fn get_message_ids(session_id: &str) -> Result<Vec<String>> {
+    let json_str = query_db(&format!(
+        "SELECT value FROM conversations_v2 WHERE conversation_id='{}';",
+        session_id
+    ))?;
     
+    let session_data: serde_json::Value = serde_json::from_str(&json_str)
+        .context("Failed to parse session JSON")?;
+    
+    let mut message_ids = Vec::new();
+    if let Some(history) = session_data.get("history").and_then(|h| h.as_array()) {
+        for msg in history {
+            if let Some(msg_id) = msg
+                .get("request_metadata")
+                .and_then(|m| m.get("message_id"))
+                .and_then(|id| id.as_str())
+            {
+                message_ids.push(msg_id.to_string());
+            }
+        }
+    }
+    
+    Ok(message_ids)
+}
+
+/// Find potential parent sessions for a child session
+/// Primary: message_id overlap (definitive proof)
+/// Fallback: timestamp matching
+pub fn find_potential_parents(child_id: &str, sessions: &[Session]) -> Result<Vec<String>> {
+    let child_msg_ids = get_message_ids(child_id)?;
+    let (child_created, _) = get_session_timestamps(child_id)?;
     let mut candidates = Vec::new();
     
+    // Primary: message_id overlap
     for session in sessions {
-        // Skip self
         if session.id == child_id {
             continue;
         }
         
-        // Check if this session has Compact tag (don't link child to another child)
-        if has_compact_tag(&session.id)? {
-            continue;
-        }
-        
-        // Get parent's timestamps
-        let (_, parent_updated) = get_session_timestamps(&session.id)?;
-        
-        // Check if parent was updated within 5 minutes before child was created
-        let time_diff = child_created - parent_updated;
-        let five_minutes_ms = 5 * 60 * 1000;
-        
-        if time_diff > 0 && time_diff <= five_minutes_ms {
-            candidates.push(session.id.clone());
+        let parent_msg_ids = get_message_ids(&session.id)?;
+        if child_msg_ids.iter().any(|id| parent_msg_ids.contains(id)) {
+            let (created, _) = get_session_timestamps(&session.id)?;
+            // Only consider sessions created before the child
+            if created < child_created {
+                candidates.push((session.id.clone(), created));
+            }
         }
     }
     
-    // Sort by closest time match (smallest time difference first)
-    candidates.sort_by_key(|parent_id| {
-        let (_, parent_updated) = get_session_timestamps(parent_id).unwrap_or((0, 0));
-        (child_created - parent_updated).abs()
-    });
+    if !candidates.is_empty() {
+        // Sort by most recently created (closest to child's creation time)
+        candidates.sort_by_key(|(_, created)| -created);
+        return Ok(candidates.into_iter().map(|(id, _)| id).collect());
+    }
     
-    Ok(candidates)
+    // Fallback: timestamp matching
+    for session in sessions {
+        if session.id == child_id || has_compact_tag(&session.id)? {
+            continue;
+        }
+        
+        let (_, parent_updated) = get_session_timestamps(&session.id)?;
+        let time_diff = child_created - parent_updated;
+        if time_diff > 0 && time_diff <= 5 * 60 * 1000 {
+            candidates.push((session.id.clone(), parent_updated));
+        }
+    }
+    
+    candidates.sort_by_key(|(_, updated)| -updated);
+    Ok(candidates.into_iter().map(|(id, _)| id).collect())
 }
 
 /// Get the path to Kiro's database

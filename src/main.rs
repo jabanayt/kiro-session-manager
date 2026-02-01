@@ -82,7 +82,11 @@ enum Commands {
         keep: bool,
     },
     /// Auto-detect and link compacted sessions to their parents
-    DetectLinks,
+    DetectLinks {
+        /// Force detection even for manually unlinked sessions
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -119,8 +123,8 @@ fn main() -> Result<()> {
         Commands::Unlink { index, keep } => {
             unlink::unlink_session(index, keep)?;
         }
-        Commands::DetectLinks => {
-            detect::detect_continuations()?;
+        Commands::DetectLinks { force } => {
+            detect::detect_continuations(force)?;
         }
     }
 

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-02-01
+
+### Changed
+- **Improved parent detection:** Use message_id overlap instead of timestamp matching
+- Parent detection now uses definitive proof (shared message_ids) rather than timing heuristics
+- Detection correctly handles long chains by picking most recently created parent
+- Added `--force` flag to `ksm detect-links` to override manually_unlinked sessions
+
+### Technical
+- Refactored database queries with shared `query_db()` helper function
+- Added `get_message_ids()` to extract message_ids from session history
+- Parent detection uses `created_at` instead of `updated_at` for chain accuracy
+- Timestamp matching retained as fallback for edge cases
+
 ## [0.1.7] - 2026-02-01
 
 ### Added

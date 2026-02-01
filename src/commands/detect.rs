@@ -11,6 +11,7 @@ use std::collections::HashMap;
 pub fn detect_unlinked_continuations(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
+    force: bool,
 ) -> Result<Vec<(Session, String)>> {
     let mut candidates = Vec::new();
     
@@ -20,8 +21,8 @@ pub fn detect_unlinked_continuations(
             if meta.parent_session_id.is_some() {
                 continue;
             }
-            // Skip if manually unlinked
-            if meta.manually_unlinked {
+            // Skip if manually unlinked (unless force flag)
+            if !force && meta.manually_unlinked {
                 continue;
             }
         }
@@ -57,7 +58,7 @@ pub fn auto_link_continuations(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
 ) -> Result<usize> {
-    let candidates = detect_unlinked_continuations(sessions, metadata)?;
+    let candidates = detect_unlinked_continuations(sessions, metadata, false)?;
     
     if candidates.is_empty() {
         return Ok(0);
@@ -80,7 +81,7 @@ pub fn auto_link_continuations(
     Ok(candidates.len())
 }
 
-pub fn detect_continuations() -> Result<()> {
+pub fn detect_continuations(force: bool) -> Result<()> {
     let sessions = get_sessions()?;
     let mut metadata = load_metadata()?;
     
@@ -91,7 +92,7 @@ pub fn detect_continuations() -> Result<()> {
     
     println!("Scanning for compacted sessions...\n");
     
-    let candidates = detect_unlinked_continuations(&sessions, &metadata)?;
+    let candidates = detect_unlinked_continuations(&sessions, &metadata, force)?;
     
     if candidates.is_empty() {
         println!("No unlinked compacted sessions found.");
