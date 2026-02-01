@@ -31,9 +31,22 @@ ksm list
 
 Output:
 ```
-[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning
+[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning ↳ from [3]
 [1] 5 minutes ago | 1 msgs | example2
 [2] 10 minutes ago | 1 msgs | example1
+```
+
+Show full parent chain:
+```bash
+ksm list --show-parents
+```
+
+Output:
+```
+[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning
+    ↳ from [3] "Initial Planning" (1 hour ago)
+        ↳ from [5] "Project Start" (2 hours ago)
+[1] 5 minutes ago | 1 msgs | example2
 ```
 
 ### Delete sessions by index
@@ -103,17 +116,17 @@ ksm unlink 1 --keep
 # Auto-detect and link compacted sessions
 ksm detect-links
 
-# Show full parent chain
-ksm list --show-parents
+# Force detection (ignore manually unlinked sessions)
+ksm detect-links --force
 ```
 
 When Kiro compacts a session (via `/compact` or automatically), it creates a new session. KSM can track these parent-child relationships to preserve your names and tags across compactions.
 
 **Features:**
-- Automatic detection of compacted sessions (via Kiro's Compact tag)
+- Automatic detection using message_id overlap (definitive proof of relationship)
 - Manual linking with `ksm link`
 - Parent sessions hidden from default list view
-- Full lineage visible with `--show-parents`
+- Full lineage visible with `--show-parents` (cyan indicators with progressive indentation)
 - Metadata inheritance from parent to child
 
 ## Requirements

@@ -12,6 +12,7 @@ pub fn format_session_display(
     metadata: &HashMap<String, SessionMetadata>,
     sessions: &[Session],
     include_original: bool,
+    show_parent_inline: bool,
 ) -> String {
     let meta = metadata.get(&session.id);
     
@@ -43,12 +44,14 @@ pub fn format_session_display(
         display.push_str(&session.preview);
     }
     
-    // Add parent indicator if present
-    if let Some(meta) = meta {
-        if let Some(parent_id) = &meta.parent_session_id {
-            // Find parent index
-            if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
-                display.push_str(&format!(" \x1b[90m↳ from [{}]\x1b[0m", parent_idx));
+    // Add parent indicator if present and requested
+    if show_parent_inline {
+        if let Some(meta) = meta {
+            if let Some(parent_id) = &meta.parent_session_id {
+                // Find parent index
+                if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
+                    display.push_str(&format!(" \x1b[36m↳ from [{}]\x1b[0m", parent_idx));
+                }
             }
         }
     }
@@ -62,7 +65,7 @@ pub fn display_sessions_with_metadata(
 ) {
     println!("\nKiro Chat Sessions:\n");
     for (idx, session) in sessions.iter().enumerate() {
-        let display = format_session_display(session, metadata, sessions, false);
+        let display = format_session_display(session, metadata, sessions, false, true);
         println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
     }
 }
@@ -113,17 +116,12 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
         
         if show_parents {
             // Show session with detailed parent chain
-            let display = format_session_display(session, &metadata, &sessions, false);
-            // Remove the inline parent indicator since we'll show it below
-            let display_no_parent = if let Some(pos) = display.rfind(" ↳ from [") {
-                &display[..pos]
-            } else {
-                &display
-            };
-            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display_no_parent);
+            let display = format_session_display(session, &metadata, &sessions, false, false);
+            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
             
-            // Show parent chain with details
+            // Show parent chain with details and indentation
             let mut current_id = session.id.clone();
+            let mut depth = 1;
             while let Some(meta) = metadata.get(&current_id) {
                 if let Some(parent_id) = &meta.parent_session_id {
                     if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
@@ -135,8 +133,10 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
                             .map(|n| format!("\"{}\"", n))
                             .unwrap_or_else(|| format!("\"{}\"", parent.preview));
                         
-                        println!("    ↳ from [{}] {} ({})", parent_idx, parent_name, parent.time_ago);
+                        let indent = "    ".repeat(depth);
+                        println!("{}\x1b[36m↳ from [{}]\x1b[0m {} ({})", indent, parent_idx, parent_name, parent.time_ago);
                         current_id = parent_id.clone();
+                        depth += 1;
                     } else {
                         break;
                     }
@@ -146,7 +146,7 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
             }
         } else {
             // Default view: show inline parent indicator
-            let display = format_session_display(session, &metadata, &sessions, false);
+            let display = format_session_display(session, &metadata, &sessions, false, true);
             println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
         }
     }
