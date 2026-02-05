@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::io::Write;
 
+use crate::commands::list::format_session_display;
 use crate::database::{find_potential_parents, has_compact_tag};
 use crate::kiro::get_sessions;
 use crate::models::{Session, SessionMetadata};
@@ -104,9 +105,12 @@ pub fn detect_continuations(force: bool) -> Result<()> {
         let parent_idx = sessions.iter().position(|s| &s.id == &parent_id).unwrap();
         let parent = &sessions[parent_idx];
         
-        println!("[{}] {} ({})", child_idx, session.preview, session.time_ago);
+        let child_display = format_session_display(&session, &metadata, &sessions, false, false);
+        let parent_display = format_session_display(parent, &metadata, &sessions, false, false);
+        
+        println!("[{}] {} ({})", child_idx, child_display, session.time_ago);
         println!("    might continue from");
-        println!("[{}] {} ({})", parent_idx, parent.preview, parent.time_ago);
+        println!("[{}] {} ({})", parent_idx, parent_display, parent.time_ago);
         
         print!("\nLink them? (y/n): ");
         std::io::stdout().flush()?;
