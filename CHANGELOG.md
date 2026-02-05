@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Resume and delete commands now hide parent sessions (matching list behavior)
 - Parent sessions no longer appear in interactive pickers
+- detect-links command now shows session names and tags in prompt
 
 ### Technical
 - Added `filter_parent_sessions()` helper for consistent filtering across commands
