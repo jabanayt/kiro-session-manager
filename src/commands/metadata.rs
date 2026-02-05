@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::io::{self, Write};
 
@@ -216,10 +216,23 @@ pub fn clean_metadata() -> Result<()> {
     let sessions = get_sessions()?;
     let mut metadata = load_metadata()?;
     
+    let current_dir = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .to_string_lossy()
+        .to_string();
+    
     let session_ids: HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
-    let stale_ids: Vec<_> = metadata.keys()
-        .filter(|id| !session_ids.contains(id.as_str()))
-        .cloned()
+    let stale_ids: Vec<_> = metadata.iter()
+        .filter(|(id, meta)| {
+            // Only consider entries from current directory
+            if let Some(dir) = &meta.directory {
+                dir == &current_dir && !session_ids.contains(id.as_str())
+            } else {
+                // Legacy entries without directory - skip (could belong to any directory)
+                false
+            }
+        })
+        .map(|(id, _)| id.clone())
         .collect();
     
     if stale_ids.is_empty() {
