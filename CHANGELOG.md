@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resume and delete commands now hide parent sessions (matching list behavior)
 - Parent sessions no longer appear in interactive pickers
 - detect-links command now shows session names and tags in prompt
+- clean-metadata command now respects directory isolation (only cleans current directory)
 
 ### Technical
 - Added `filter_parent_sessions()` helper for consistent filtering across commands
 - Added `display_filtered_sessions()` unified display function
 - Removed `display_sessions_with_metadata()` (replaced by unified function)
+- Added auto-migration for legacy metadata entries without directory field
+- Auto-migration saves metadata immediately to ensure persistence
 
 ## [0.1.10] - 2026-02-02
 

@@ -59,14 +59,29 @@ pub fn cleanup_stale_metadata(metadata: &mut HashMap<String, SessionMetadata>, s
         .to_string();
     
     let session_ids: HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
+    
+    // Auto-migrate legacy entries: add directory field to active sessions
+    // TODO(v0.2.0): Remove legacy support for entries without directory field
+    let mut migrated = false;
+    for (id, meta) in metadata.iter_mut() {
+        if meta.directory.is_none() && session_ids.contains(id.as_str()) {
+            meta.directory = Some(current_dir.clone());
+            migrated = true;
+        }
+    }
+    
+    if migrated {
+        save_metadata(metadata)?;
+    }
+    
     let stale_ids: Vec<_> = metadata.iter()
         .filter(|(id, meta)| {
             // Only consider entries from current directory
             if let Some(dir) = &meta.directory {
                 dir == &current_dir && !session_ids.contains(id.as_str())
             } else {
-                // Legacy entries without directory - clean if not in current sessions
-                !session_ids.contains(id.as_str())
+                // Legacy entries without directory - skip (could belong to any directory)
+                false
             }
         })
         .map(|(id, _)| id.clone())
