@@ -7,6 +7,22 @@ use crate::kiro::get_sessions;
 use crate::models::{Session, SessionMetadata};
 use crate::storage::{cleanup_stale_metadata, load_metadata};
 
+/// Filter out parent sessions (sessions that are referenced as parents)
+pub fn filter_parent_sessions<'a>(
+    sessions: &'a [Session],
+    metadata: &HashMap<String, SessionMetadata>,
+) -> Vec<&'a Session> {
+    let parent_ids: std::collections::HashSet<_> = metadata
+        .values()
+        .filter_map(|m| m.parent_session_id.as_ref())
+        .collect();
+    
+    sessions
+        .iter()
+        .filter(|s| !parent_ids.contains(&s.id))
+        .collect()
+}
+
 pub fn format_session_display(
     session: &Session,
     metadata: &HashMap<String, SessionMetadata>,
@@ -59,14 +75,53 @@ pub fn format_session_display(
     display
 }
 
-pub fn display_sessions_with_metadata(
+/// Display filtered sessions with optional parent chain display
+pub fn display_filtered_sessions(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
+    show_parents: bool,
 ) {
+    let filtered_sessions = filter_parent_sessions(sessions, metadata);
+
+    if filtered_sessions.is_empty() {
+        println!("No sessions found.");
+        return;
+    }
+
     println!("\nKiro Chat Sessions:\n");
-    for (idx, session) in sessions.iter().enumerate() {
-        let display = format_session_display(session, metadata, sessions, false, true);
-        println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
+    for session in &filtered_sessions {
+        // Find original index
+        let idx = sessions.iter().position(|s| s.id == session.id).unwrap();
+        
+        if show_parents {
+            // Show session with detailed parent chain
+            let display = format_session_display(session, metadata, sessions, false, false);
+            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
+            
+            // Show parent chain with details and indentation
+            let mut current_id = session.id.clone();
+            let mut depth = 1;
+            while let Some(meta) = metadata.get(&current_id) {
+                if let Some(parent_id) = &meta.parent_session_id {
+                    if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
+                        let parent = &sessions[parent_idx];
+                        let parent_display = format_session_display(parent, metadata, sessions, false, false);
+                        let indent = "    ".repeat(depth);
+                        println!("{}\x1b[36m↳ from [{}]\x1b[0m {} ({})", indent, parent_idx, parent_display, parent.time_ago);
+                        current_id = parent_id.clone();
+                        depth += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // Default view: show inline parent indicator
+            let display = format_session_display(session, metadata, sessions, false, true);
+            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
+        }
     }
 }
 
@@ -93,60 +148,7 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
         }
     }
 
-    // Filter out parent sessions (sessions that are referenced as parents)
-    let parent_ids: std::collections::HashSet<_> = metadata
-        .values()
-        .filter_map(|m| m.parent_session_id.as_ref())
-        .collect();
-    
-    let filtered_sessions: Vec<_> = sessions
-        .iter()
-        .filter(|s| !parent_ids.contains(&s.id))
-        .collect();
-
-    if filtered_sessions.is_empty() {
-        println!("No sessions found.");
-        return Ok(());
-    }
-
-    println!("\nKiro Chat Sessions:\n");
-    for session in &filtered_sessions {
-        // Find original index
-        let idx = sessions.iter().position(|s| s.id == session.id).unwrap();
-        
-        if show_parents {
-            // Show session with detailed parent chain
-            let display = format_session_display(session, &metadata, &sessions, false, false);
-            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
-            
-            // Show parent chain with details and indentation
-            let mut current_id = session.id.clone();
-            let mut depth = 1;
-            while let Some(meta) = metadata.get(&current_id) {
-                if let Some(parent_id) = &meta.parent_session_id {
-                    if let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
-                        let parent = &sessions[parent_idx];
-                        
-                        // Use format_session_display to show tags and name
-                        let parent_display = format_session_display(parent, &metadata, &sessions, false, false);
-                        
-                        let indent = "    ".repeat(depth);
-                        println!("{}\x1b[36m↳ from [{}]\x1b[0m {} ({})", indent, parent_idx, parent_display, parent.time_ago);
-                        current_id = parent_id.clone();
-                        depth += 1;
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-        } else {
-            // Default view: show inline parent indicator
-            let display = format_session_display(session, &metadata, &sessions, false, true);
-            println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
-        }
-    }
+    display_filtered_sessions(&sessions, &metadata, show_parents);
     
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
