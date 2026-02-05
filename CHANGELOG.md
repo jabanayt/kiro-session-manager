@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Resume and delete commands now hide parent sessions (matching list behavior)
+- Parent sessions no longer appear in interactive pickers
+
+### Technical
+- Added `filter_parent_sessions()` helper for consistent filtering across commands
+- Added `display_filtered_sessions()` unified display function
+- Removed `display_sessions_with_metadata()` (replaced by unified function)
+
 ## [0.1.10] - 2026-02-02
 
 ### Added

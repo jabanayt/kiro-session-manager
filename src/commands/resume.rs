@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::commands::list::{display_sessions_with_metadata, format_session_display};
+use crate::commands::list::{display_filtered_sessions, format_session_display};
 use crate::kiro::get_sessions;
 use crate::storage::{cleanup_stale_metadata, load_metadata};
 
@@ -69,8 +69,8 @@ pub fn interactive_resume() -> Result<()> {
         return Ok(());
     }
     
-    // Display sessions using shared helper
-    display_sessions_with_metadata(&sessions, &metadata);
+    // Display filtered sessions
+    display_filtered_sessions(&sessions, &metadata, false);
     
     // Prompt for selection
     print!("\nSelect session (0-{}): ", sessions.len() - 1);

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::process::Command;
 
 use crate::kiro::get_sessions;
-use crate::commands::list::{display_sessions_with_metadata, format_session_display};
+use crate::commands::list::{display_filtered_sessions, format_session_display};
 use crate::models::Session;
 use crate::storage::{load_metadata, save_metadata, get_full_chain, get_ordered_chain, relink_around_session};
 
@@ -22,7 +22,7 @@ fn interactive_delete(sessions: &[Session]) -> Result<Vec<usize>> {
     let metadata = load_metadata()?;
     
     println!();
-    display_sessions_with_metadata(sessions, &metadata);
+    display_filtered_sessions(sessions, &metadata, false);
     println!();
     
     print!("Enter sessions to delete (comma-separated): ");
