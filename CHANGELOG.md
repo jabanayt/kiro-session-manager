@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-02-09
+
 ### Changed
 - Switched to direct database access for session listing (more reliable, no external sqlite3 dependency)
 - Session data now fetched from kiro-cli's SQLite database instead of parsing CLI output
