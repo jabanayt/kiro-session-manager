@@ -7,7 +7,7 @@ A lightweight CLI tool to manage kiro-cli chat sessions efficiently.
 Kiro-CLI creates a new session every time you quit, leading to:
 - Cluttered session lists
 - Two-step deletion process (list → copy ID → delete)
-- Unhelpful session names (just the last message)
+- Unhelpful session names (just the first message)
 
 ## Solution
 
@@ -93,7 +93,7 @@ ksm untag 0 urgent
 2. Apply to entire chain (default)
 
 ```bash
-# Clean up metadata for deleted sessions
+# Clean up metadata for sessions deleted outside of KSM (in kiro-cli etc)
 ksm clean-metadata
 ```
 
@@ -147,7 +147,6 @@ When Kiro compacts a session (via `/compact` or automatically), it creates a new
 
 - Rust 1.70+
 - kiro-cli installed and in PATH
-- sqlite3 installed (for resume and session tracking functionality)
 
 ## Configuration
 
@@ -175,7 +174,7 @@ custom_path = "/path/to/metadata.json"
 
 - **Global mode:** Convenient for managing all sessions in one place
 - **Local mode:** Isolates metadata per project, prevents cross-project interference
-- **Custom mode:** Store metadata wherever you prefer (network drive, Dropbox, etc.)
+- **Custom mode:** Store metadata wherever you prefer (network drive, etc.)
 
 ### Auto-Detection
 

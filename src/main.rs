@@ -25,6 +25,9 @@ enum Commands {
         /// Show full parent chain with details
         #[arg(long)]
         show_parents: bool,
+        /// Compare database and CLI methods (testing only)
+        #[arg(long, hide = true)]
+        compare_methods: bool,
     },
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
     #[command(alias = "d")]
@@ -96,7 +99,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::List { show_parents } => list::list_sessions(show_parents)?,
+        Commands::List { show_parents, compare_methods } => {
+            if compare_methods {
+                list::compare_methods()?;
+            } else {
+                list::list_sessions(show_parents)?;
+            }
+        }
         Commands::Delete { indices, yes } => {
             match indices {
                 Some(idx) => delete::delete_sessions(Some(idx), yes)?,

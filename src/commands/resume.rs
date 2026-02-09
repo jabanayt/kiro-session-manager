@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::Command;
 
 use crate::commands::list::{display_filtered_sessions, format_session_display};
+use crate::database::open_db_connection_write;
 use crate::kiro::get_sessions;
 use crate::storage::{cleanup_stale_metadata, load_metadata};
 
@@ -16,31 +16,21 @@ fn resume_session_by_db(index: usize) -> Result<()> {
     }
     
     let target_session = &sessions[index];
-    let current_dir = std::env::current_dir()?;
-    
-    // Get the real database path
-    let real_db_path = PathBuf::from(std::env::var("HOME")?)
-        .join(".local/share/kiro-cli/data.sqlite3");
+    let current_dir = std::env::current_dir()?.display().to_string();
     
     // Update the target session's timestamp to make it most recent
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
+        .as_millis() as i64;
     
-    let output = Command::new("sqlite3")
-        .arg(&real_db_path)
-        .arg(format!(
-            "UPDATE conversations_v2 SET updated_at = {} WHERE key='{}' AND conversation_id='{}';",
-            timestamp,
-            current_dir.display(),
-            target_session.id
-        ))
-        .output()
-        .context("Failed to execute sqlite3. Is it installed?")?;
+    let conn = open_db_connection_write()
+        .context("Failed to open database for writing")?;
     
-    if !output.status.success() {
-        anyhow::bail!("Failed to update database: {}", String::from_utf8_lossy(&output.stderr));
-    }
+    conn.execute(
+        "UPDATE conversations_v2 SET updated_at = ? WHERE key = ? AND conversation_id = ?",
+        [&timestamp.to_string(), &current_dir, &target_session.id],
+    )
+    .context("Failed to update session timestamp")?;
     
     // Execute kiro-cli normally - it will resume the "most recent" session (which we just made it)
     let status = Command::new("kiro-cli")

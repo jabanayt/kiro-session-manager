@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.12] - 2026-02-09
+
+### Changed
+- Switched to direct database access for session listing (more reliable, no external sqlite3 dependency)
+- Session data now fetched from kiro-cli's SQLite database instead of parsing CLI output
+- All database operations now use rusqlite library (embedded SQLite)
+- Improved time formatting (proper grammar: "1 hour ago" not "1 hours ago")
+- Improved message count formatting (proper pluralization: "1 msg" not "1 msgs")
+
+### Added
+- Hybrid fallback: automatically falls back to CLI parsing if database access fails
+- Hidden `--compare-methods` flag for testing database vs CLI output
+
 ## [0.1.11] - 2026-02-05
 
 ### Fixed
