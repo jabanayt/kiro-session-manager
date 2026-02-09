@@ -3,9 +3,11 @@ use std::collections::HashMap;
 
 use crate::commands::detect::auto_link_continuations;
 use crate::config::load_config;
-use crate::kiro::get_sessions;
+use crate::database::fetch_sessions_from_db;
+use crate::kiro::{get_sessions, parse_sessions};
 use crate::models::{Session, SessionMetadata};
 use crate::storage::{cleanup_stale_metadata, load_metadata};
+use std::process::Command;
 
 /// Filter out parent sessions (sessions that are referenced as parents)
 pub fn filter_parent_sessions<'a>(
@@ -152,5 +154,72 @@ pub fn list_sessions(show_parents: bool) -> Result<()> {
     
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
+    Ok(())
+}
+
+
+/// Compare database and CLI methods (testing only)
+pub fn compare_methods() -> Result<()> {
+    eprintln!("=== Comparing Database vs CLI Methods ===\n");
+    
+    // Fetch from database
+    eprintln!("Fetching from database...");
+    let db_sessions = match fetch_sessions_from_db() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Database method failed: {}", e);
+            return Ok(());
+        }
+    };
+    eprintln!("✓ Database returned {} sessions\n", db_sessions.len());
+    
+    // Fetch from CLI
+    eprintln!("Fetching from CLI...");
+    let output = Command::new("kiro-cli")
+        .args(["chat", "--list-sessions"])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let cli_sessions = parse_sessions(&stderr)?;
+    eprintln!("✓ CLI returned {} sessions\n", cli_sessions.len());
+    
+    // Compare counts
+    if db_sessions.len() != cli_sessions.len() {
+        eprintln!("⚠ Session count mismatch: DB={}, CLI={}\n", db_sessions.len(), cli_sessions.len());
+    }
+    
+    // Compare each session
+    let mut differences = 0;
+    for (i, (db, cli)) in db_sessions.iter().zip(cli_sessions.iter()).enumerate() {
+        let mut diff = Vec::new();
+        
+        if db.id != cli.id {
+            diff.push(format!("  ID: DB='{}' vs CLI='{}'", db.id, cli.id));
+        }
+        if db.time_ago != cli.time_ago {
+            diff.push(format!("  Time: DB='{}' vs CLI='{}'", db.time_ago, cli.time_ago));
+        }
+        if db.preview != cli.preview {
+            diff.push(format!("  Preview: DB='{}' vs CLI='{}'", db.preview, cli.preview));
+        }
+        if db.msg_count != cli.msg_count {
+            diff.push(format!("  Count: DB='{}' vs CLI='{}'", db.msg_count, cli.msg_count));
+        }
+        
+        if !diff.is_empty() {
+            eprintln!("Session [{}] differences:", i);
+            for d in diff {
+                eprintln!("{}", d);
+            }
+            eprintln!();
+            differences += 1;
+        }
+    }
+    
+    if differences == 0 {
+        eprintln!("✅ All sessions match! Database method is accurate.");
+    } else {
+        eprintln!("⚠ Found differences in {} session(s)", differences);
+    }
+    
     Ok(())
 }
