@@ -2,9 +2,23 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use std::process::Command;
 
+use crate::database::fetch_sessions_from_db;
 use crate::models::Session;
 
 pub fn get_sessions() -> Result<Vec<Session>> {
+    // Try database first
+    match fetch_sessions_from_db() {
+        Ok(sessions) => Ok(sessions),
+        Err(e) => {
+            // Warn user about database failure, fall back to CLI
+            eprintln!("⚠ Database access failed: {}", e);
+            eprintln!("⚠ Falling back to CLI parsing...\n");
+            get_sessions_from_cli()
+        }
+    }
+}
+
+fn get_sessions_from_cli() -> Result<Vec<Session>> {
     let output = Command::new("kiro-cli")
         .args(["chat", "--list-sessions"])
         .output()
