@@ -27,6 +27,7 @@ pub struct SessionMetadata {
 
 #[derive(Debug, Deserialize)]
 pub struct ConversationData {
+    #[allow(dead_code)]
     #[serde(default)]
     pub conversation_id: String,
     #[serde(default)]
