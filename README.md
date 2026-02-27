@@ -1,5 +1,8 @@
 # Kiro Session Manager (ksm)
 
+[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20GPL--3.0-blue)](LICENSE-APACHE)
+[![Release](https://img.shields.io/github/v/release/jabanayt/kiro-session-manager)](https://github.com/jabanayt/kiro-session-manager/releases)
+
 A lightweight CLI tool to manage kiro-cli chat sessions efficiently.
 
 ## Problem
@@ -13,185 +16,67 @@ Kiro-CLI creates a new session every time you quit, leading to:
 
 `ksm` provides a simple interface to list, delete, tag, and resume sessions by index numbers.
 
-## Installation
+## Quick Start
+
+### Installation
+
+Download the latest binary from [Releases](https://github.com/jabanayt/kiro-session-manager/releases), extract, and place in your PATH:
+
+```bash
+tar xzf ksm-linux-x86_64.tar.gz
+cp ksm ~/.local/bin/
+```
+
+Or build from source:
 
 ```bash
 cargo build --release
-sudo cp target/release/ksm /usr/local/bin/
-# or
 cp target/release/ksm ~/.local/bin/
 ```
 
-## Usage
+See [Installation Guide](docs/INSTALLATION.md) for detailed options.
 
-### List sessions
+### Basic Usage
+
 ```bash
+# List sessions
 ksm list
-```
 
-Output:
-```
-[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning ↳ from [3]
-[1] 5 minutes ago | 1 msgs | example2
-[2] 10 minutes ago | 1 msgs | example1
-```
+# Delete sessions by index
+ksm d 1,2,3
 
-Show full parent chain:
-```bash
-ksm list --show-parents
-```
-
-Output:
-```
-[0] 2 minutes ago | 10 msgs | [work] [urgent] Project Planning
-    ↳ from [3] "Initial Planning" (1 hour ago)
-        ↳ from [5] "Project Start" (2 hours ago)
-[1] 5 minutes ago | 1 msgs | example2
-```
-
-### Delete sessions by index
-```bash
-# Interactive mode - shows list and prompts for selection
-ksm delete
-ksm d
-
-# Delete single session
-ksm delete 1
-ksm d 1
-
-# Delete multiple sessions (comma or space separated)
-ksm delete 1,2,3
-ksm d 1 2 3
-
-# Skip confirmation prompt
-ksm delete 1 -y
-ksm d 1,2,3 -y
-```
-
-**Chain-aware deletion:** When deleting a session that's part of a chain, you'll be offered three options:
-1. Delete only the selected session (relinks around it to maintain chain)
-2. Delete the session and all its parents
-3. Delete the entire chain
-
-### Name and tag sessions
-```bash
-# Set a custom name for a session
-ksm name 0 "Project Planning"
-
-# Apply name to entire chain (if session is part of a chain)
-ksm name 0 "Project Planning" --chain
-
-# Add tags to a session
-ksm tag 0 work urgent
-
-# Remove tags from a session
-ksm untag 0 urgent
-```
-
-**Chain-aware tagging:** When tagging or untagging a session that's part of a chain, you'll be offered two options:
-1. Apply only to the selected session
-2. Apply to entire chain (default)
-
-```bash
-# Clean up metadata for sessions deleted outside of KSM (in kiro-cli etc)
-ksm clean-metadata
-```
-
-### Resume sessions
-```bash
-# Interactive picker - shows list, prompts for number
-ksm resume
-ksm r
-
-# Resume by index
+# Resume a session
 ksm r 0
 
-# Resume most recent session
-ksm r -l
-
-# Resume by tag (picker if multiple matches)
-ksm r -t work
-
-# Resume by exact name
-ksm r -n "Project Planning"
+# Tag a session
+ksm tag 0 work urgent
 ```
 
-### Session continuation tracking
-```bash
-# Link a child session to its parent (preserves metadata across compaction)
-ksm link 1 3
+See [Usage Guide](docs/USAGE.md) for all commands and features.
 
-# Unlink a session from its parent
-ksm unlink 1
+## Documentation
 
-# Unlink but keep inherited metadata
-ksm unlink 1 --keep
-
-# Auto-detect and link compacted sessions
-ksm detect-links
-
-# Force detection (ignore manually unlinked sessions)
-ksm detect-links --force
-```
-
-When Kiro compacts a session (via `/compact` or automatically), it creates a new session. KSM can track these parent-child relationships to preserve your names and tags across compactions.
-
-**Features:**
-- Automatic detection using message_id overlap (definitive proof of relationship)
-- Manual linking with `ksm link`
-- Parent sessions hidden from default list view
-- Full lineage visible with `--show-parents` (cyan indicators with progressive indentation)
-- Metadata inheritance from parent to child
+- [Installation Guide](docs/INSTALLATION.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Usage Guide](docs/USAGE.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- [Release Notes](docs/releases/)
 
 ## Requirements
 
-- Rust 1.70+
+- Linux (x86_64)
 - kiro-cli installed and in PATH
 
-## Configuration
+## Development
 
-KSM uses `~/.ksm/config.toml` to configure metadata storage location. The config file is created automatically on first run.
+This project is built with AI assistance from [kiro-cli](https://github.com/aws/kiro-cli). As a session manager for kiro-cli, this is a natural fit. All design decisions, code review, and testing are human-led.
 
-### Storage Modes
+Please keep issue discussions focused on bugs and features. Off-topic issues will be closed.
 
-**Global (default):** Metadata stored in `~/.ksm/metadata.json`, shared across all projects
-```toml
-metadata_storage = "global"
-```
+## License
 
-**Local:** Metadata stored per-directory in `.kiro/ksm-metadata.json`
-```toml
-metadata_storage = "local"
-```
+Licensed under either of:
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- GNU General Public License v3.0 ([LICENSE-GPL3](LICENSE-GPL3))
 
-**Custom:** Metadata stored at a custom path
-```toml
-metadata_storage = "custom"
-custom_path = "/path/to/metadata.json"
-```
-
-### Why Configure Storage?
-
-- **Global mode:** Convenient for managing all sessions in one place
-- **Local mode:** Isolates metadata per project, prevents cross-project interference
-- **Custom mode:** Store metadata wherever you prefer (network drive, etc.)
-
-### Auto-Detection
-
-KSM can automatically detect when Kiro compacts a session and link the new session to its parent:
-
-```toml
-# Enable automatic detection of compacted sessions
-# Only sessions with Kiro's Compact tag will be auto-linked
-auto_detect_continuations = false  # Default: false
-```
-
-Set to `true` to enable automatic linking on `ksm list`. Use `ksm detect-links` for manual detection.
-
-## Dependencies
-
-- `clap` - CLI argument parsing
-- `regex` - Parse kiro-cli output
-- `anyhow` - Error handling
-- `serde` + `serde_json` - Metadata serialization
-- `toml` - Configuration file parsing
+at your option.
