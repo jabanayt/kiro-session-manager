@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-02-27
+
+### Added
+
+- Dual licensing (Apache-2.0 OR GPL-3.0-only) with LICENSE-APACHE and LICENSE-GPL3
+- Documentation structure in docs/ (INSTALLATION.md, CONFIGURATION.md, USAGE.md, CONTRIBUTING.md)
+- GitHub Actions release workflow for automated binary builds on tag push
+- GitHub Issue templates for bug reports and feature requests
+- SECURITY.md with vulnerability reporting policy
+- README badges for license and release version
+- AI development disclosure in README
+- auto_clean config option to disable automatic metadata cleanup
+
+### Changed
+
+- README shortened to essentials with links to docs/
+- Release notes moved to docs/releases/ and cleaned for public use
+
+### Fixed
+
+- Auto-clean wiping all metadata when database returns no sessions
+
 ## [0.1.12] - 2026-02-09
 
 ### Changed
