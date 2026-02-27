@@ -10,6 +10,8 @@ pub struct Config {
     pub custom_path: Option<String>,
     #[serde(default = "default_auto_detect")]
     pub auto_detect_continuations: bool,
+    #[serde(default = "default_auto_clean")]
+    pub auto_clean: bool,
 }
 
 fn default_metadata_storage() -> String {
@@ -20,12 +22,17 @@ fn default_auto_detect() -> bool {
     false
 }
 
+fn default_auto_clean() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
             metadata_storage: default_metadata_storage(),
             custom_path: None,
             auto_detect_continuations: default_auto_detect(),
+            auto_clean: default_auto_clean(),
         }
     }
 }
@@ -40,7 +47,7 @@ fn config_path() -> Result<PathBuf> {
 fn create_default_config() -> Result<Config> {
     let config = Config::default();
     let path = config_path()?;
-    
+
     let content = r#"# Metadata storage location
 # Options: "global", "local", "custom"
 # - global: ~/.ksm/metadata.json (shared across all projects)
@@ -55,34 +62,43 @@ metadata_storage = "global"
 # Set to true to enable automatic detection on 'ksm list'
 # Only sessions with Kiro's Compact tag will be auto-linked
 auto_detect_continuations = false
+
+# Automatically clean stale metadata entries on list/resume
+# Set to false to disable (prevents metadata loss if database fails)
+auto_clean = true
 "#;
-    
+
     fs::write(&path, content)?;
     Ok(config)
 }
 
 pub fn load_config() -> Result<Config> {
     let path = config_path()?;
-    
+
     if !path.exists() {
         return create_default_config();
     }
-    
+
     let content = fs::read_to_string(&path)?;
-    let mut config: Config = toml::from_str(&content)
-        .context("Failed to parse config.toml")?;
-    
+    let mut config: Config = toml::from_str(&content).context("Failed to parse config.toml")?;
+
     // Check if config needs updating (missing fields will use defaults from serde)
     // Re-save to ensure all fields are present
     let default = Config::default();
     let mut needs_update = false;
-    
+
     // Check if auto_detect_continuations is missing from file
     if !content.contains("auto_detect_continuations") {
         config.auto_detect_continuations = default.auto_detect_continuations;
         needs_update = true;
     }
-    
+
+    // Check if auto_clean is missing from file
+    if !content.contains("auto_clean") {
+        config.auto_clean = default.auto_clean;
+        needs_update = true;
+    }
+
     if needs_update {
         // Re-write config with all fields
         let updated_content = format!(
@@ -98,13 +114,22 @@ metadata_storage = "{}"
 # Set to true to enable automatic detection on 'ksm list'
 # Only sessions with Kiro's Compact tag will be auto-linked
 auto_detect_continuations = {}
+
+# Automatically clean stale metadata entries on list/resume
+# Set to false to disable (prevents metadata loss if database fails)
+auto_clean = {}
 "#,
             config.metadata_storage,
-            config.custom_path.as_ref().map(|p| format!("custom_path = \"{}\"\n", p)).unwrap_or_else(|| "# custom_path = \"/path/to/metadata.json\"\n".to_string()),
-            config.auto_detect_continuations
+            config
+                .custom_path
+                .as_ref()
+                .map(|p| format!("custom_path = \"{}\"\n", p))
+                .unwrap_or_else(|| "# custom_path = \"/path/to/metadata.json\"\n".to_string()),
+            config.auto_detect_continuations,
+            config.auto_clean
         );
         fs::write(&path, updated_content)?;
     }
-    
+
     Ok(config)
 }

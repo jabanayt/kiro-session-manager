@@ -3,6 +3,7 @@ use std::io::Write;
 use std::process::Command;
 
 use crate::commands::list::{display_filtered_sessions, format_session_display};
+use crate::config::load_config;
 use crate::database::open_db_connection_write;
 use crate::kiro::get_sessions;
 use crate::storage::{cleanup_stale_metadata, load_metadata};
@@ -10,38 +11,37 @@ use crate::storage::{cleanup_stale_metadata, load_metadata};
 /// Resume a session by index using database timestamp manipulation
 fn resume_session_by_db(index: usize) -> Result<()> {
     let sessions = get_sessions()?;
-    
+
     if index >= sessions.len() {
         anyhow::bail!("Index {} out of range (max: {})", index, sessions.len() - 1);
     }
-    
+
     let target_session = &sessions[index];
     let current_dir = std::env::current_dir()?.display().to_string();
-    
+
     // Update the target session's timestamp to make it most recent
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis() as i64;
-    
-    let conn = open_db_connection_write()
-        .context("Failed to open database for writing")?;
-    
+
+    let conn = open_db_connection_write().context("Failed to open database for writing")?;
+
     conn.execute(
         "UPDATE conversations_v2 SET updated_at = ? WHERE key = ? AND conversation_id = ?",
         [&timestamp.to_string(), &current_dir, &target_session.id],
     )
     .context("Failed to update session timestamp")?;
-    
+
     // Execute kiro-cli normally - it will resume the "most recent" session (which we just made it)
     let status = Command::new("kiro-cli")
         .args(&["chat", "--resume"])
         .status()
         .context("Failed to execute kiro-cli")?;
-    
+
     if !status.success() {
         anyhow::bail!("kiro-cli exited with error");
     }
-    
+
     Ok(())
 }
 
@@ -52,50 +52,55 @@ pub fn resume_session(index: usize) -> Result<()> {
 pub fn interactive_resume() -> Result<()> {
     let sessions = get_sessions()?;
     let mut metadata = load_metadata()?;
-    cleanup_stale_metadata(&mut metadata, &sessions)?;
-    
+
+    let config = load_config()?;
+    if config.auto_clean && !sessions.is_empty() {
+        cleanup_stale_metadata(&mut metadata, &sessions)?;
+    }
+
     if sessions.is_empty() {
         println!("No sessions found.");
         return Ok(());
     }
-    
+
     // Display filtered sessions
     display_filtered_sessions(&sessions, &metadata, false);
-    
+
     // Prompt for selection
     print!("\nSelect session (0-{}): ", sessions.len() - 1);
     std::io::stdout().flush()?;
-    
+
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
-    
-    let index: usize = input.trim().parse()
-        .context("Invalid number")?;
-    
+
+    let index: usize = input.trim().parse().context("Invalid number")?;
+
     if index >= sessions.len() {
         anyhow::bail!("Index {} out of range (max: {})", index, sessions.len() - 1);
     }
-    
+
     // Resume selected session
     resume_session(index)?;
-    
+
     Ok(())
 }
 
 pub fn resume_by_tag(tag: &str) -> Result<()> {
     let sessions = get_sessions()?;
     let metadata = load_metadata()?;
-    
+
     // Find sessions with this tag
-    let matches: Vec<(usize, &crate::models::Session)> = sessions.iter()
+    let matches: Vec<(usize, &crate::models::Session)> = sessions
+        .iter()
         .enumerate()
         .filter(|(_, s)| {
-            metadata.get(&s.id)
+            metadata
+                .get(&s.id)
                 .map(|m| m.tags.contains(tag))
                 .unwrap_or(false)
         })
         .collect();
-    
+
     match matches.len() {
         0 => anyhow::bail!("No sessions found with tag '{}'", tag),
         1 => {
@@ -108,43 +113,48 @@ pub fn resume_by_tag(tag: &str) -> Result<()> {
             println!("\nSessions with tag '{}':\n", tag);
             for (idx, (_orig_idx, session)) in matches.iter().enumerate() {
                 let display = format_session_display(session, &metadata, &sessions, false, true);
-                println!("[{}] {} | {} | {}", idx, session.time_ago, session.msg_count, display);
+                println!(
+                    "[{}] {} | {} | {}",
+                    idx, session.time_ago, session.msg_count, display
+                );
             }
-            
+
             print!("\nSelect session (0-{}): ", matches.len() - 1);
             std::io::stdout().flush()?;
-            
+
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
-            let selection: usize = input.trim().parse()
-                .context("Invalid number")?;
-            
+            let selection: usize = input.trim().parse().context("Invalid number")?;
+
             if selection >= matches.len() {
-                anyhow::bail!("Index {} out of range (max: {})", selection, matches.len() - 1);
+                anyhow::bail!(
+                    "Index {} out of range (max: {})",
+                    selection,
+                    matches.len() - 1
+                );
             }
-            
+
             let (orig_index, _) = matches[selection];
             resume_session(orig_index)?;
         }
     }
-    
+
     Ok(())
 }
 
 pub fn resume_by_name(name: &str) -> Result<()> {
     let sessions = get_sessions()?;
     let metadata = load_metadata()?;
-    
+
     // Find session with exact name match
-    let found = sessions.iter()
-        .enumerate()
-        .find(|(_, s)| {
-            metadata.get(&s.id)
-                .and_then(|m| m.name.as_deref())
-                .map(|n| n == name)
-                .unwrap_or(false)
-        });
-    
+    let found = sessions.iter().enumerate().find(|(_, s)| {
+        metadata
+            .get(&s.id)
+            .and_then(|m| m.name.as_deref())
+            .map(|n| n == name)
+            .unwrap_or(false)
+    });
+
     match found {
         Some((index, _)) => {
             println!("Resuming session '{}'...", name);
@@ -152,7 +162,7 @@ pub fn resume_by_name(name: &str) -> Result<()> {
         }
         None => anyhow::bail!("No session found with name '{}'", name),
     }
-    
+
     Ok(())
 }
 
@@ -161,10 +171,10 @@ pub fn resume_last() -> Result<()> {
         .args(&["chat", "--resume"])
         .status()
         .context("Failed to execute kiro-cli")?;
-    
+
     if !status.success() {
         anyhow::bail!("Failed to resume last session");
     }
-    
+
     Ok(())
 }
