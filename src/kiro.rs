@@ -30,7 +30,7 @@ fn get_sessions_from_cli() -> Result<Vec<Session>> {
 
 pub fn parse_sessions(output: &str) -> Result<Vec<Session>> {
     let re = Regex::new(
-        r"Chat SessionId: \x1B\[38;5;\d+m([a-f0-9-]+)\n\x1B\[0m\s+\x1B\[2m(.+?)\x1B\[0m \| (.+?) \| \x1B\[2m(\d+ msgs?)\x1B\[0m"
+        r"Chat SessionId: \x1B\[38;5;\d+m([a-f0-9-]+)\n\x1B\[0m\s+\x1B\[2m(.+?)\x1B\[0m \| (.+?) \| \x1B\[2m(\d+ msgs?)\x1B\[0m",
     )?;
 
     let sessions: Vec<Session> = re
