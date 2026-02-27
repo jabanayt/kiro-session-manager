@@ -69,7 +69,7 @@ See [Usage Guide](docs/USAGE.md) for all commands and features.
 
 ## Development
 
-This project is built with AI assistance from [kiro-cli](https://github.com/aws/kiro-cli). As a session manager for kiro-cli, this is a natural fit. All design decisions, code review, and testing are human-led.
+This project is built with AI assistance from [kiro-cli](https://kiro.dev/cli/). As a session manager for kiro-cli, this is a natural fit. All design decisions, code review, and testing are human-led.
 
 Please keep issue discussions focused on bugs and features. Off-topic issues will be closed.
 
