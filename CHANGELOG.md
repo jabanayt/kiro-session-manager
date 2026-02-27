@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-27
+
+### Added
+
+- Library crate (lib.rs) enabling future TUI and library API consumers
+- Structured error types (KsmError) with thiserror
+- Logging infrastructure with log and env_logger crates
+
+### Changed
+
+- Full architecture restructure: layered design with models, data (traits), services, and CLI modules
+- Trait-based data access with SessionSource and MetadataStore abstractions
+- Services layer providing complete operations with result structs
+- Two-tier error handling: thiserror (library) and anyhow (binary)
+- CLI commands refactored to thin wrappers around services
+
+### Fixed
+
+- Incorrect kiro-cli URL in README Development section
+
 ## [0.1.13] - 2026-02-27
 
 ### Added
