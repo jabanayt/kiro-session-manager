@@ -1,9 +1,11 @@
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use log::debug;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize)]
+use crate::error::{KsmError, Result};
+
+/// Application configuration loaded from `~/.ksm/config.toml`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     #[serde(default = "default_metadata_storage")]
     pub metadata_storage: String,
@@ -37,13 +39,17 @@ impl Default for Config {
     }
 }
 
-fn config_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME environment variable not set")?;
+/// Returns path to `~/.ksm/config.toml`, creating `~/.ksm/` if needed.
+pub fn config_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME").map_err(|_| {
+        KsmError::Config("HOME environment variable not set".to_string())
+    })?;
     let ksm_dir = PathBuf::from(home).join(".ksm");
     fs::create_dir_all(&ksm_dir)?;
     Ok(ksm_dir.join("config.toml"))
 }
 
+/// Creates default config file and returns the Config.
 fn create_default_config() -> Result<Config> {
     let config = Config::default();
     let path = config_path()?;
@@ -69,9 +75,14 @@ auto_clean = true
 "#;
 
     fs::write(&path, content)?;
+    debug!("Created default config at {}", path.display());
     Ok(config)
 }
 
+/// Loads configuration from `~/.ksm/config.toml`.
+///
+/// Creates default config if file doesn't exist.
+/// Auto-migrates missing fields on existing configs.
 pub fn load_config() -> Result<Config> {
     let path = config_path()?;
 
@@ -80,7 +91,7 @@ pub fn load_config() -> Result<Config> {
     }
 
     let content = fs::read_to_string(&path)?;
-    let mut config: Config = toml::from_str(&content).context("Failed to parse config.toml")?;
+    let mut config: Config = toml::from_str(&content)?;
 
     // Check if config needs updating (missing fields will use defaults from serde)
     // Re-save to ensure all fields are present
@@ -131,5 +142,6 @@ auto_clean = {}
         fs::write(&path, updated_content)?;
     }
 
+    debug!("Loaded config from {}", path.display());
     Ok(config)
 }
