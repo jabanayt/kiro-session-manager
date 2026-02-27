@@ -10,6 +10,9 @@ license = "Apache-2.0 OR GPL-3.0-only"
 clap = { version = "4.5", features = ["derive"] }
 regex = "1.11"
 anyhow = "1.0"
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
