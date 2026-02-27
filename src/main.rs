@@ -46,15 +46,9 @@ enum Commands {
         chain: bool,
     },
     /// Add tags to a session
-    Tag {
-        index: usize,
-        tags: Vec<String>,
-    },
+    Tag { index: usize, tags: Vec<String> },
     /// Remove tags from a session
-    Untag {
-        index: usize,
-        tags: Vec<String>,
-    },
+    Untag { index: usize, tags: Vec<String> },
     /// Clean up metadata for deleted sessions
     CleanMetadata,
     /// Resume a chat session
@@ -99,24 +93,30 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::List { show_parents, compare_methods } => {
+        Commands::List {
+            show_parents,
+            compare_methods,
+        } => {
             if compare_methods {
                 list::compare_methods()?;
             } else {
                 list::list_sessions(show_parents)?;
             }
         }
-        Commands::Delete { indices, yes } => {
-            match indices {
-                Some(idx) => delete::delete_sessions(Some(idx), yes)?,
-                None => delete::delete_sessions(None, yes)?,
-            }
-        }
+        Commands::Delete { indices, yes } => match indices {
+            Some(idx) => delete::delete_sessions(Some(idx), yes)?,
+            None => delete::delete_sessions(None, yes)?,
+        },
         Commands::Name { index, name, chain } => metadata::set_name(index, &name, chain)?,
         Commands::Tag { index, tags } => metadata::add_tags(index, &tags)?,
         Commands::Untag { index, tags } => metadata::remove_tags(index, &tags)?,
         Commands::CleanMetadata => metadata::clean_metadata()?,
-        Commands::Resume { index, last, tag, name } => {
+        Commands::Resume {
+            index,
+            last,
+            tag,
+            name,
+        } => {
             if last {
                 resume::resume_last()?;
             } else if let Some(tag) = tag {
@@ -129,7 +129,10 @@ fn main() -> Result<()> {
                 resume::interactive_resume()?;
             }
         }
-        Commands::Link { child_index, parent_index } => {
+        Commands::Link {
+            child_index,
+            parent_index,
+        } => {
             link::link_sessions(child_index, parent_index)?;
         }
         Commands::Unlink { index, keep } => {

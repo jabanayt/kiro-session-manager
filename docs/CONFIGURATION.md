@@ -46,3 +46,17 @@ auto_detect_continuations = false  # Default: false
 ```
 
 Set to `true` to enable automatic linking on `ksm list`. Use `ksm detect-links` for manual detection.
+
+## Auto-Clean
+
+KSM automatically removes stale metadata entries (for sessions that no longer exist) when running `ksm list` or `ksm resume`.
+
+```toml
+# Automatically clean stale metadata entries on list/resume
+# Set to false to disable (prevents metadata loss if database fails)
+auto_clean = true  # Default: true
+```
+
+Set to `false` if you experience database connectivity issues that cause metadata loss. When disabled, use `ksm clean-metadata` to manually remove stale entries.
+
+Even with `auto_clean = true`, KSM will skip cleanup if the session source returns zero sessions, as this typically indicates a database or CLI failure rather than genuinely having no sessions.

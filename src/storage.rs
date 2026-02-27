@@ -8,7 +8,7 @@ use crate::models::{Session, SessionMetadata};
 
 pub fn metadata_path() -> Result<PathBuf> {
     let config = load_config()?;
-    
+
     match config.metadata_storage.as_str() {
         "global" => {
             let home = std::env::var("HOME").context("HOME environment variable not set")?;
@@ -23,7 +23,8 @@ pub fn metadata_path() -> Result<PathBuf> {
             Ok(kiro_dir.join("ksm-metadata.json"))
         }
         "custom" => {
-            let custom = config.custom_path
+            let custom = config
+                .custom_path
                 .context("custom_path not set in config when metadata_storage is 'custom'")?;
             let path = PathBuf::from(custom);
             if let Some(parent) = path.parent() {
@@ -31,7 +32,10 @@ pub fn metadata_path() -> Result<PathBuf> {
             }
             Ok(path)
         }
-        _ => anyhow::bail!("Invalid metadata_storage option: {}", config.metadata_storage),
+        _ => anyhow::bail!(
+            "Invalid metadata_storage option: {}",
+            config.metadata_storage
+        ),
     }
 }
 
@@ -52,14 +56,23 @@ pub fn save_metadata(metadata: &HashMap<String, SessionMetadata>) -> Result<()> 
     Ok(())
 }
 
-pub fn cleanup_stale_metadata(metadata: &mut HashMap<String, SessionMetadata>, sessions: &[Session]) -> Result<()> {
+pub fn cleanup_stale_metadata(
+    metadata: &mut HashMap<String, SessionMetadata>,
+    sessions: &[Session],
+) -> Result<()> {
+    // Defence in depth: never clean when sessions list is empty
+    // An empty list likely means database/CLI failure, not zero real sessions
+    if sessions.is_empty() {
+        return Ok(());
+    }
+
     let current_dir = std::env::current_dir()
         .context("Failed to get current directory")?
         .to_string_lossy()
         .to_string();
-    
+
     let session_ids: HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
-    
+
     // Auto-migrate legacy entries: add directory field to active sessions
     // TODO(v0.2.0): Remove legacy support for entries without directory field
     let mut migrated = false;
@@ -69,12 +82,13 @@ pub fn cleanup_stale_metadata(metadata: &mut HashMap<String, SessionMetadata>, s
             migrated = true;
         }
     }
-    
+
     if migrated {
         save_metadata(metadata)?;
     }
-    
-    let stale_ids: Vec<_> = metadata.iter()
+
+    let stale_ids: Vec<_> = metadata
+        .iter()
         .filter(|(id, meta)| {
             // Only consider entries from current directory
             if let Some(dir) = &meta.directory {
@@ -86,14 +100,14 @@ pub fn cleanup_stale_metadata(metadata: &mut HashMap<String, SessionMetadata>, s
         })
         .map(|(id, _)| id.clone())
         .collect();
-    
+
     if !stale_ids.is_empty() {
         for id in stale_ids {
             metadata.remove(&id);
         }
         save_metadata(metadata)?;
     }
-    
+
     Ok(())
 }
 
@@ -105,9 +119,10 @@ pub fn get_full_chain(
     metadata: &HashMap<String, SessionMetadata>,
     sessions: &[Session],
 ) -> Vec<String> {
-    let session_ids: std::collections::HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
+    let session_ids: std::collections::HashSet<_> =
+        sessions.iter().map(|s| s.id.as_str()).collect();
     let mut chain = vec![session_id.to_string()];
-    
+
     // Walk up to find all parents
     let mut current = session_id.to_string();
     while let Some(meta) = metadata.get(&current) {
@@ -122,7 +137,7 @@ pub fn get_full_chain(
             break;
         }
     }
-    
+
     // Walk down to find all children
     fn find_children(
         parent_id: &str,
@@ -139,9 +154,9 @@ pub fn get_full_chain(
             }
         }
     }
-    
+
     find_children(session_id, metadata, &mut chain, &session_ids);
-    
+
     chain
 }
 
@@ -152,18 +167,24 @@ pub fn get_ordered_chain(
     sessions: &[Session],
 ) -> Vec<String> {
     let chain = get_full_chain(session_id, metadata, sessions);
-    
+
     if chain.len() <= 1 {
         return chain;
     }
-    
+
     let mut ordered = Vec::new();
-    
+
     // Find the youngest child (no one points to it as parent)
-    let youngest = chain.iter().find(|id| {
-        !metadata.values().any(|m| m.parent_session_id.as_ref() == Some(id))
-    }).unwrap_or(&session_id.to_string()).clone();
-    
+    let youngest = chain
+        .iter()
+        .find(|id| {
+            !metadata
+                .values()
+                .any(|m| m.parent_session_id.as_ref() == Some(id))
+        })
+        .unwrap_or(&session_id.to_string())
+        .clone();
+
     // Walk up the parent chain from youngest
     ordered.push(youngest.clone());
     let mut current = youngest;
@@ -179,7 +200,7 @@ pub fn get_ordered_chain(
             break;
         }
     }
-    
+
     ordered
 }
 
@@ -193,19 +214,19 @@ pub fn relink_around_session(
     let parent_id = metadata
         .get(session_id)
         .and_then(|m| m.parent_session_id.clone());
-    
+
     // Find any child that points to this session
     let child_id = metadata
         .iter()
         .find(|(_, m)| m.parent_session_id.as_ref() == Some(&session_id.to_string()))
         .map(|(id, _)| id.clone());
-    
+
     // If there's a child, update its parent_session_id
     if let Some(child) = child_id {
         if let Some(child_meta) = metadata.get_mut(&child) {
             child_meta.parent_session_id = parent_id;
         }
     }
-    
+
     Ok(())
 }

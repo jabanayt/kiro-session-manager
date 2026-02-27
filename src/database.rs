@@ -15,7 +15,7 @@ pub fn open_db_connection() -> Result<Connection> {
     let db_path = get_db_path()?;
     let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .context("Failed to open database")?;
-    
+
     // Verify conversations_v2 table exists
     let table_exists: bool = conn
         .query_row(
@@ -24,11 +24,11 @@ pub fn open_db_connection() -> Result<Connection> {
             |row| row.get(0),
         )
         .context("Failed to check for conversations_v2 table")?;
-    
+
     if !table_exists {
         anyhow::bail!("conversations_v2 table not found. Please update kiro-cli.");
     }
-    
+
     Ok(conn)
 }
 
@@ -42,25 +42,25 @@ pub fn open_db_connection_write() -> Result<Connection> {
 pub fn fetch_sessions_from_db() -> Result<Vec<Session>> {
     let conn = open_db_connection()?;
     let current_dir = std::env::current_dir()?.display().to_string();
-    
+
     let mut stmt = conn.prepare(
         "SELECT conversation_id, value, created_at, updated_at 
          FROM conversations_v2 
          WHERE key = ? 
-         ORDER BY updated_at DESC"
+         ORDER BY updated_at DESC",
     )?;
-    
+
     let sessions = stmt
         .query_map([&current_dir], |row| {
             let conversation_id: String = row.get(0)?;
             let value_json: String = row.get(1)?;
             let _created_at: i64 = row.get(2)?;
             let updated_at: i64 = row.get(3)?;
-            
+
             Ok((conversation_id, value_json, updated_at))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     let mut result = Vec::new();
     for (id, json, updated_at) in sessions {
         match serde_json::from_str::<ConversationData>(&json) {
@@ -68,11 +68,15 @@ pub fn fetch_sessions_from_db() -> Result<Vec<Session>> {
                 result.push(conversation_to_session(id, data, updated_at)?);
             }
             Err(e) => {
-                anyhow::bail!("Failed to parse conversation JSON for session {}: {}", id, e);
+                anyhow::bail!(
+                    "Failed to parse conversation JSON for session {}: {}",
+                    id,
+                    e
+                );
             }
         }
     }
-    
+
     Ok(result)
 }
 
@@ -81,7 +85,7 @@ fn conversation_to_session(id: String, data: ConversationData, updated_at: i64) 
     let time_ago = calculate_time_ago(updated_at);
     let preview = extract_preview(&data);
     let msg_count = format_msg_count(&data);
-    
+
     Ok(Session {
         id,
         time_ago,
@@ -96,14 +100,14 @@ fn calculate_time_ago(timestamp_ms: i64) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    
+
     let diff_ms = now - timestamp_ms;
     let diff_secs = diff_ms / 1000;
-    
+
     if diff_secs < 60 {
         return format!("{} seconds ago", diff_secs);
     }
-    
+
     let diff_mins = diff_secs / 60;
     if diff_mins < 60 {
         return if diff_mins == 1 {
@@ -112,7 +116,7 @@ fn calculate_time_ago(timestamp_ms: i64) -> String {
             format!("{} minutes ago", diff_mins)
         };
     }
-    
+
     let diff_hours = diff_mins / 60;
     if diff_hours < 24 {
         return if diff_hours == 1 {
@@ -121,7 +125,7 @@ fn calculate_time_ago(timestamp_ms: i64) -> String {
             format!("{} hours ago", diff_hours)
         };
     }
-    
+
     let diff_days = diff_hours / 24;
     if diff_days == 1 {
         "1 day ago".to_string()
@@ -145,11 +149,11 @@ fn extract_preview(data: &ConversationData) -> String {
             }
         }
     }
-    
+
     if data.history.is_empty() && data.latest_summary.is_some() {
         return "[Compacted session]".to_string();
     }
-    
+
     "[No preview available]".to_string()
 }
 
@@ -171,9 +175,9 @@ pub fn has_compact_tag(session_id: &str) -> Result<bool> {
         [session_id],
         |row| row.get(0),
     )?;
-    
+
     let data: ConversationData = serde_json::from_str(&value_json)?;
-    
+
     if let Some(summary) = data.latest_summary {
         if summary.len() > 1 {
             if let Some(tags) = summary[1].get("message_meta_tags") {
@@ -183,7 +187,7 @@ pub fn has_compact_tag(session_id: &str) -> Result<bool> {
             }
         }
     }
-    
+
     Ok(false)
 }
 
@@ -206,9 +210,9 @@ pub fn get_message_ids(session_id: &str) -> Result<Vec<String>> {
         [session_id],
         |row| row.get(0),
     )?;
-    
+
     let data: ConversationData = serde_json::from_str(&value_json)?;
-    
+
     let mut message_ids = Vec::new();
     for entry in &data.history {
         if let Some(metadata) = &entry.request_metadata {
@@ -217,7 +221,7 @@ pub fn get_message_ids(session_id: &str) -> Result<Vec<String>> {
             }
         }
     }
-    
+
     Ok(message_ids)
 }
 
@@ -226,13 +230,13 @@ pub fn find_potential_parents(child_id: &str, sessions: &[Session]) -> Result<Ve
     let child_msg_ids = get_message_ids(child_id)?;
     let (child_created, _) = get_session_timestamps(child_id)?;
     let mut candidates = Vec::new();
-    
+
     // Primary: message_id overlap
     for session in sessions {
         if session.id == child_id {
             continue;
         }
-        
+
         let parent_msg_ids = get_message_ids(&session.id)?;
         if child_msg_ids.iter().any(|id| parent_msg_ids.contains(id)) {
             let (created, _) = get_session_timestamps(&session.id)?;
@@ -241,25 +245,25 @@ pub fn find_potential_parents(child_id: &str, sessions: &[Session]) -> Result<Ve
             }
         }
     }
-    
+
     if !candidates.is_empty() {
         candidates.sort_by_key(|(_, created)| -created);
         return Ok(candidates.into_iter().map(|(id, _)| id).collect());
     }
-    
+
     // Fallback: timestamp matching
     for session in sessions {
         if session.id == child_id || has_compact_tag(&session.id)? {
             continue;
         }
-        
+
         let (_, parent_updated) = get_session_timestamps(&session.id)?;
         let time_diff = child_created - parent_updated;
         if time_diff > 0 && time_diff <= 5 * 60 * 1000 {
             candidates.push((session.id.clone(), parent_updated));
         }
     }
-    
+
     candidates.sort_by_key(|(_, updated)| -updated);
     Ok(candidates.into_iter().map(|(id, _)| id).collect())
 }
