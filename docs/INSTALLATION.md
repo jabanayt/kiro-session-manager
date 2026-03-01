@@ -7,14 +7,14 @@ Download the latest release from the [Releases page](https://github.com/jabanayt
 Extract and place in your PATH:
 
 ```bash
-tar xzf ksm-linux-x86_64.tar.gz
+tar xzf ksm-linux-<arch>.tar.gz
 cp ksm ~/.local/bin/
 ```
 
 Or run directly without installing:
 
 ```bash
-tar xzf ksm-linux-x86_64.tar.gz
+tar xzf ksm-linux-<arch>.tar.gz
 ./ksm list
 ```
 
@@ -42,7 +42,7 @@ ksm --version
 
 ## Requirements
 
-- Linux (x86_64)
+- Linux (x86_64 or ARM64)
 - kiro-cli installed and in PATH
 
 ## PATH Setup

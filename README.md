@@ -23,7 +23,7 @@ Kiro-CLI creates a new session every time you quit, leading to:
 Download the latest binary from [Releases](https://github.com/jabanayt/kiro-session-manager/releases), extract, and place in your PATH:
 
 ```bash
-tar xzf ksm-linux-x86_64.tar.gz
+tar xzf ksm-linux-<arch>.tar.gz
 cp ksm ~/.local/bin/
 ```
 
@@ -64,7 +64,7 @@ See [Usage Guide](docs/USAGE.md) for all commands and features.
 
 ## Requirements
 
-- Linux (x86_64)
+- Linux (x86_64 or ARM64)
 - kiro-cli installed and in PATH
 
 ## Development
