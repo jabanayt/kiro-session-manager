@@ -86,27 +86,32 @@ impl SessionSource for HybridSource {
     }
 
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
-        self.database.get_conversation(session_id)
+        self.database
+            .get_conversation(session_id)
             .or_else(|_| self.cli_fallback.get_conversation(session_id))
     }
 
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
-        self.database.get_message_ids(session_id)
+        self.database
+            .get_message_ids(session_id)
             .or_else(|_| self.cli_fallback.get_message_ids(session_id))
     }
 
     fn has_compact_tag(&self, session_id: &str) -> Result<bool> {
-        self.database.has_compact_tag(session_id)
+        self.database
+            .has_compact_tag(session_id)
             .or_else(|_| self.cli_fallback.has_compact_tag(session_id))
     }
 
     fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
-        self.database.get_timestamps(session_id)
+        self.database
+            .get_timestamps(session_id)
             .or_else(|_| self.cli_fallback.get_timestamps(session_id))
     }
 
     fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
-        self.database.update_timestamp(session_id, timestamp)
+        self.database
+            .update_timestamp(session_id, timestamp)
             .or_else(|_| self.cli_fallback.update_timestamp(session_id, timestamp))
     }
 

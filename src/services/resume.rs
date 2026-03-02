@@ -16,9 +16,15 @@ pub enum ResumeTarget {
 /// Result of resolving a resume target.
 pub enum ResumeResult {
     /// Session found, timestamp updated, ready to launch kiro-cli.
-    Ready { session_id: String, display_name: String },
+    Ready {
+        session_id: String,
+        display_name: String,
+    },
     /// Multiple sessions match a tag -- caller must pick one and retry with Index.
-    MultipleMatches { tag: String, matches: Vec<ResumeMatch> },
+    MultipleMatches {
+        tag: String,
+        matches: Vec<ResumeMatch>,
+    },
     /// Resume last -- no timestamp manipulation needed, just launch kiro-cli.
     LaunchDirect,
 }
@@ -47,7 +53,9 @@ pub fn resume(
             let list_result = sessions::list_sessions(source, store)?;
             sessions::validate_index(index, list_result.all_sessions.len())?;
             let session = &list_result.all_sessions[index];
-            let display_name = list_result.metadata.get(&session.id)
+            let display_name = list_result
+                .metadata
+                .get(&session.id)
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| session.preview.clone());
             prepare_resume(&session.id, source)?;
@@ -71,9 +79,10 @@ pub fn resume(
             let list_result = sessions::list_sessions(source, store)?;
             let matches = find_by_tag(&tag, &list_result.all_sessions, &list_result.metadata);
             match matches.len() {
-                0 => Err(KsmError::SessionNotFound(
-                    format!("No sessions found with tag '{}'", tag),
-                )),
+                0 => Err(KsmError::SessionNotFound(format!(
+                    "No sessions found with tag '{}'",
+                    tag
+                ))),
                 1 => {
                     prepare_resume(&matches[0].session_id, source)?;
                     Ok(ResumeResult::Ready {

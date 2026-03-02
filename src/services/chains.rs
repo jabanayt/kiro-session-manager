@@ -65,10 +65,13 @@ pub fn get_full_chain(
     ) {
         for (id, meta) in metadata {
             if let Some(pid) = &meta.parent_session_id
-                && pid == parent_id && !chain.contains(id) && session_ids.contains(id.as_str()) {
-                    chain.push(id.clone());
-                    find_children(id, metadata, chain, session_ids);
-                }
+                && pid == parent_id
+                && !chain.contains(id)
+                && session_ids.contains(id.as_str())
+            {
+                chain.push(id.clone());
+                find_children(id, metadata, chain, session_ids);
+            }
         }
     }
 
@@ -136,9 +139,10 @@ pub fn relink_around_session(
         .map(|(id, _)| id.clone());
 
     if let Some(child) = &child_id
-        && let Some(child_meta) = metadata.get_mut(child) {
-            child_meta.parent_session_id = parent_id.clone();
-        }
+        && let Some(child_meta) = metadata.get_mut(child)
+    {
+        child_meta.parent_session_id = parent_id.clone();
+    }
 
     child_id.map(|child| (child, parent_id))
 }
@@ -150,11 +154,7 @@ pub fn relink_around_session(
 /// Sets parent_session_id, clears manually_unlinked, inherits name/tags/directory
 /// from parent. Falls back to current_dir if parent has no directory.
 /// Does NOT validate or save — caller is responsible for both.
-fn apply_link(
-    child_id: &str,
-    parent_id: &str,
-    metadata: &mut HashMap<String, SessionMetadata>,
-) {
+fn apply_link(child_id: &str, parent_id: &str, metadata: &mut HashMap<String, SessionMetadata>) {
     let parent_meta = metadata.get(parent_id).cloned();
 
     let mut child_metadata = metadata.get(child_id).cloned().unwrap_or_default();
@@ -165,11 +165,14 @@ fn apply_link(
         child_metadata.name = parent.name.clone();
         child_metadata.tags = parent.tags.clone();
         child_metadata.directory = parent.directory.clone().or_else(|| {
-            std::env::current_dir().ok().map(|d| d.to_string_lossy().to_string())
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.to_string_lossy().to_string())
         });
     } else if child_metadata.directory.is_none() {
-        child_metadata.directory =
-            std::env::current_dir().ok().map(|d| d.to_string_lossy().to_string());
+        child_metadata.directory = std::env::current_dir()
+            .ok()
+            .map(|d| d.to_string_lossy().to_string());
     }
 
     metadata.insert(child_id.to_string(), child_metadata);
@@ -217,11 +220,12 @@ pub fn link_sessions(
     }
 
     if let Some(existing) = metadata.get(child_id)
-        && existing.parent_session_id.is_some() {
-            return Err(KsmError::ChainConflict(
-                "Session is already linked to a parent. Unlink first.".to_string(),
-            ));
-        }
+        && existing.parent_session_id.is_some()
+    {
+        return Err(KsmError::ChainConflict(
+            "Session is already linked to a parent. Unlink first.".to_string(),
+        ));
+    }
 
     // --- Metadata conflict check ---
 
@@ -230,20 +234,21 @@ pub fn link_sessions(
         let parent_meta = metadata.get(parent_id);
 
         if let Some(existing) = child_meta
-            && (existing.name.is_some() || !existing.tags.is_empty()) {
-                let conflicts = if let Some(parent) = parent_meta {
-                    existing.name != parent.name || existing.tags != parent.tags
-                } else {
-                    true
-                };
+            && (existing.name.is_some() || !existing.tags.is_empty())
+        {
+            let conflicts = if let Some(parent) = parent_meta {
+                existing.name != parent.name || existing.tags != parent.tags
+            } else {
+                true
+            };
 
-                if conflicts {
-                    return Err(KsmError::MetadataConflict {
-                        child_id: child_id.to_string(),
-                        parent_id: parent_id.to_string(),
-                    });
-                }
+            if conflicts {
+                return Err(KsmError::MetadataConflict {
+                    child_id: child_id.to_string(),
+                    parent_id: parent_id.to_string(),
+                });
             }
+        }
     }
 
     // --- Execute link ---
@@ -273,9 +278,7 @@ pub fn execute_unlink(
     let parent_id = metadata
         .get(session_id)
         .and_then(|m| m.parent_session_id.clone())
-        .ok_or_else(|| {
-            KsmError::ChainConflict("Session is not linked to a parent".to_string())
-        })?;
+        .ok_or_else(|| KsmError::ChainConflict("Session is not linked to a parent".to_string()))?;
 
     let mut updated = metadata.get(session_id).cloned().unwrap_or_default();
     updated.parent_session_id = None;

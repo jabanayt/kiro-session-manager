@@ -191,11 +191,7 @@ pub fn clean_metadata(
             }
         })
         .map(|(id, meta)| {
-            let display = meta
-                .name
-                .as_deref()
-                .unwrap_or(&id[..8])
-                .to_string();
+            let display = meta.name.as_deref().unwrap_or(&id[..8]).to_string();
             (id.clone(), display)
         })
         .collect();

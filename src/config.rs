@@ -41,9 +41,8 @@ impl Default for Config {
 
 /// Returns path to `~/.ksm/config.toml`, creating `~/.ksm/` if needed.
 pub fn config_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| {
-        KsmError::Config("HOME environment variable not set".to_string())
-    })?;
+    let home = std::env::var("HOME")
+        .map_err(|_| KsmError::Config("HOME environment variable not set".to_string()))?;
     let ksm_dir = PathBuf::from(home).join(".ksm");
     fs::create_dir_all(&ksm_dir)?;
     Ok(ksm_dir.join("config.toml"))
