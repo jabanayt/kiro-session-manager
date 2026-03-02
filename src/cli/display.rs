@@ -67,13 +67,14 @@ pub fn format_session_display(
 
     // Add tags if present
     if let Some(meta) = meta
-        && !meta.tags.is_empty() {
-            let mut tags: Vec<_> = meta.tags.iter().collect();
-            tags.sort();
-            for tag in tags {
-                display.push_str(&format!("[{}] ", tag));
-            }
+        && !meta.tags.is_empty()
+    {
+        let mut tags: Vec<_> = meta.tags.iter().collect();
+        tags.sort();
+        for tag in tags {
+            display.push_str(&format!("[{}] ", tag));
         }
+    }
 
     // Add name or preview
     if let Some(meta) = meta {
@@ -92,10 +93,11 @@ pub fn format_session_display(
     // Add parent indicator
     if show_parent_inline
         && let Some(meta) = meta
-            && let Some(parent_id) = &meta.parent_session_id
-                && let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id) {
-                    display.push_str(&format!(" \x1b[36m↳ from [{}]\x1b[0m", parent_idx));
-                }
+        && let Some(parent_id) = &meta.parent_session_id
+        && let Some(parent_idx) = sessions.iter().position(|s| &s.id == parent_id)
+    {
+        display.push_str(&format!(" \x1b[36m↳ from [{}]\x1b[0m", parent_idx));
+    }
 
     display
 }

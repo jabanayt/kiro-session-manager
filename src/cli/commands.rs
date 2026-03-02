@@ -87,11 +87,13 @@ pub enum Commands {
 /// Main CLI dispatch. Called from main.rs.
 pub fn run(cli: Cli) -> Result<()> {
     let source = HybridSource::new();
-    let store = JsonMetadataStore::from_config()
-        .context("Failed to initialise metadata store")?;
+    let store = JsonMetadataStore::from_config().context("Failed to initialise metadata store")?;
 
     match cli.command {
-        Commands::List { show_parents, compare_methods } => {
+        Commands::List {
+            show_parents,
+            compare_methods,
+        } => {
             if compare_methods {
                 cmd_compare_methods()?;
             } else {
@@ -113,10 +115,18 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::CleanMetadata => {
             cmd_clean_metadata(&source, &store)?;
         }
-        Commands::Resume { index, last, tag, name } => {
+        Commands::Resume {
+            index,
+            last,
+            tag,
+            name,
+        } => {
             cmd_resume(&source, &store, index, last, tag, name)?;
         }
-        Commands::Link { child_index, parent_index } => {
+        Commands::Link {
+            child_index,
+            parent_index,
+        } => {
             cmd_link(&source, &store, child_index, parent_index)?;
         }
         Commands::Unlink { index, keep } => {
@@ -153,7 +163,12 @@ fn cmd_list(
     }
 
     let visible = sessions::visible_session_indices(&result.all_sessions, &result.metadata);
-    display::print_session_list(&result.all_sessions, &result.metadata, &visible, show_parents);
+    display::print_session_list(
+        &result.all_sessions,
+        &result.metadata,
+        &visible,
+        show_parents,
+    );
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
     Ok(())
@@ -204,7 +219,9 @@ fn cmd_delete(
             print!("\nSession [{}] is part of a chain: ", idx);
             for (i, chain_id) in chain_ctx.ordered_ids.iter().enumerate() {
                 if let Some(chain_idx) = all_sessions.iter().position(|s| &s.id == chain_id) {
-                    if i > 0 { print!(" → "); }
+                    if i > 0 {
+                        print!(" → ");
+                    }
                     print!("[{}]", chain_idx);
                 }
             }
@@ -230,13 +247,21 @@ fn cmd_delete(
             };
 
             let result = delete::delete_from_chain(
-                &session.id, chain_choice, all_sessions, &mut meta, source, store,
+                &session.id,
+                chain_choice,
+                all_sessions,
+                &mut meta,
+                source,
+                store,
             )?;
 
             match choice {
                 "1" => println!("\n✓ Deleted [{}] and relinked chain", idx),
                 "2" => println!("\n✓ Deleted {} session(s)", result.deleted_ids.len()),
-                "3" => println!("\n✓ Deleted entire chain ({} sessions)", result.deleted_ids.len()),
+                "3" => println!(
+                    "\n✓ Deleted entire chain ({} sessions)",
+                    result.deleted_ids.len()
+                ),
                 _ => {}
             }
             return Ok(());
@@ -263,7 +288,10 @@ fn cmd_delete(
         }
     }
 
-    let ids: Vec<String> = indices.iter().map(|&i| all_sessions[i].id.clone()).collect();
+    let ids: Vec<String> = indices
+        .iter()
+        .map(|&i| all_sessions[i].id.clone())
+        .collect();
     println!("\nDeleting {} session(s)...", ids.len());
     delete::delete_sessions(&ids, source, &mut meta, store)?;
     println!("\nDone!");
@@ -295,7 +323,11 @@ fn cmd_name(
     let result = metadata::set_name(scope, name, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Set name for {} sessions: {}", result.affected_ids.len(), name);
+        println!(
+            "\n✓ Set name for {} sessions: {}",
+            result.affected_ids.len(),
+            name
+        );
     } else {
         println!("Set name for session [{}]: {}", index, name);
     }
@@ -327,7 +359,11 @@ fn cmd_tag(
     let result = metadata::add_tags(scope, tags, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Added tags to {} sessions: {}", result.affected_ids.len(), tags.join(", "));
+        println!(
+            "\n✓ Added tags to {} sessions: {}",
+            result.affected_ids.len(),
+            tags.join(", ")
+        );
     } else {
         println!("Added tags to session [{}]: {}", index, tags.join(", "));
     }
@@ -359,7 +395,11 @@ fn cmd_untag(
     let result = metadata::remove_tags(scope, tags, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Removed tags from {} sessions: {}", result.affected_ids.len(), tags.join(", "));
+        println!(
+            "\n✓ Removed tags from {} sessions: {}",
+            result.affected_ids.len(),
+            tags.join(", ")
+        );
     } else {
         println!("Removed tags from session [{}]: {}", index, tags.join(", "));
     }
@@ -368,10 +408,7 @@ fn cmd_untag(
 }
 
 /// Clean metadata command.
-fn cmd_clean_metadata(
-    source: &dyn SessionSource,
-    store: &dyn MetadataStore,
-) -> Result<()> {
+fn cmd_clean_metadata(source: &dyn SessionSource, store: &dyn MetadataStore) -> Result<()> {
     let all_sessions = source.list_sessions().context("Failed to list sessions")?;
     let mut meta = store.load().context("Failed to load metadata")?;
 
@@ -415,14 +452,19 @@ fn cmd_resume(
             return Ok(());
         }
 
-        let visible = sessions::visible_session_indices(
-            &list_result.all_sessions, &list_result.metadata,
-        );
+        let visible =
+            sessions::visible_session_indices(&list_result.all_sessions, &list_result.metadata);
         display::print_session_list(
-            &list_result.all_sessions, &list_result.metadata, &visible, false,
+            &list_result.all_sessions,
+            &list_result.metadata,
+            &visible,
+            false,
         );
 
-        print!("\nSelect session (0-{}): ", list_result.all_sessions.len() - 1);
+        print!(
+            "\nSelect session (0-{}): ",
+            list_result.all_sessions.len() - 1
+        );
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -454,7 +496,11 @@ fn cmd_resume(
             let selection: usize = input.trim().parse().context("Invalid number")?;
 
             if selection >= matches.len() {
-                anyhow::bail!("Index {} out of range (max: {})", selection, matches.len() - 1);
+                anyhow::bail!(
+                    "Index {} out of range (max: {})",
+                    selection,
+                    matches.len() - 1
+                );
             }
 
             let retry_target = resume::ResumeTarget::Index(matches[selection].original_index);
@@ -509,7 +555,12 @@ fn cmd_link(
                 if !parent_meta.tags.is_empty() {
                     println!(
                         "  Tags: {}",
-                        parent_meta.tags.iter().cloned().collect::<Vec<_>>().join(", ")
+                        parent_meta
+                            .tags
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                 }
             } else {
@@ -530,14 +581,22 @@ fn cmd_link(
         Err(e) => return Err(e.into()),
     };
 
-    println!("✓ Linked session [{}] to parent [{}]", child_index, parent_index);
+    println!(
+        "✓ Linked session [{}] to parent [{}]",
+        child_index, parent_index
+    );
     if let Some(name) = &result.inherited_name {
         println!("✓ Inherited name: \"{}\"", name);
     }
     if !result.inherited_tags.is_empty() {
         println!(
             "✓ Inherited tags: {}",
-            result.inherited_tags.iter().cloned().collect::<Vec<_>>().join(", ")
+            result
+                .inherited_tags
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -608,16 +667,20 @@ fn cmd_detect_links(
     }
 
     for candidate in candidates {
-        let child_idx = all_sessions.iter().position(|s| s.id == candidate.child.id).unwrap();
-        let parent_idx = all_sessions.iter().position(|s| s.id == candidate.parent_id).unwrap();
+        let child_idx = all_sessions
+            .iter()
+            .position(|s| s.id == candidate.child.id)
+            .unwrap();
+        let parent_idx = all_sessions
+            .iter()
+            .position(|s| s.id == candidate.parent_id)
+            .unwrap();
         let parent = &all_sessions[parent_idx];
 
-        let child_display = display::format_session_display(
-            &candidate.child, &meta, all_sessions, false, false,
-        );
-        let parent_display = display::format_session_display(
-            parent, &meta, all_sessions, false, false,
-        );
+        let child_display =
+            display::format_session_display(&candidate.child, &meta, all_sessions, false, false);
+        let parent_display =
+            display::format_session_display(parent, &meta, all_sessions, false, false);
         let child_time = display::format_time_ago(candidate.child.updated_at);
         let parent_time = display::format_time_ago(parent.updated_at);
 
@@ -631,7 +694,13 @@ fn cmd_detect_links(
         io::stdin().read_line(&mut input)?;
 
         if input.trim().eq_ignore_ascii_case("y") {
-            chains::link_sessions(&candidate.child.id, &candidate.parent_id, true, &mut meta, store)?;
+            chains::link_sessions(
+                &candidate.child.id,
+                &candidate.parent_id,
+                true,
+                &mut meta,
+                store,
+            )?;
             println!("✓ Linked [{}] to [{}]\n", child_idx, parent_idx);
         } else {
             println!("Skipped.\n");
@@ -674,13 +743,20 @@ fn cmd_compare_methods() -> Result<()> {
         let mut current_idx = None;
         for diff in &result.differences {
             if current_idx != Some(diff.index) {
-                if current_idx.is_some() { eprintln!(); }
+                if current_idx.is_some() {
+                    eprintln!();
+                }
                 eprintln!("Session [{}] differences:", diff.index);
                 current_idx = Some(diff.index);
             }
-            eprintln!("  {}: DB='{}' vs CLI='{}'", diff.field, diff.source_a, diff.source_b);
+            eprintln!(
+                "  {}: DB='{}' vs CLI='{}'",
+                diff.field, diff.source_a, diff.source_b
+            );
         }
-        let session_count = result.differences.iter()
+        let session_count = result
+            .differences
+            .iter()
             .map(|d| d.index)
             .collect::<std::collections::HashSet<_>>()
             .len();

@@ -35,9 +35,8 @@ fn metadata_path() -> Result<PathBuf> {
 
     match config.metadata_storage.as_str() {
         "global" => {
-            let home = std::env::var("HOME").map_err(|_| {
-                KsmError::Config("HOME environment variable not set".to_string())
-            })?;
+            let home = std::env::var("HOME")
+                .map_err(|_| KsmError::Config("HOME environment variable not set".to_string()))?;
             let ksm_dir = PathBuf::from(home).join(".ksm");
             fs::create_dir_all(&ksm_dir)?;
             Ok(ksm_dir.join("metadata.json"))

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::data::SessionSource;
 use crate::error::{KsmError, Result};
-use crate::models::{extract_preview, ConversationData, Session};
+use crate::models::{ConversationData, Session};
 
 /// Session source backed by kiro-cli's SQLite database.
 pub struct DatabaseSource {
@@ -60,7 +60,7 @@ impl DatabaseSource {
         created_at: i64,
         updated_at: i64,
     ) -> Session {
-        let preview = extract_preview(data);
+        let preview = data.preview();
         let msg_count = data.history.len() as u32;
 
         Session {
@@ -126,9 +126,10 @@ impl SessionSource for DatabaseSource {
         let mut message_ids = Vec::new();
         for entry in &data.history {
             if let Some(metadata) = &entry.request_metadata
-                && let Some(msg_id) = &metadata.message_id {
-                    message_ids.push(msg_id.clone());
-                }
+                && let Some(msg_id) = &metadata.message_id
+            {
+                message_ids.push(msg_id.clone());
+            }
         }
         Ok(message_ids)
     }
@@ -137,10 +138,11 @@ impl SessionSource for DatabaseSource {
         let data = self.get_conversation(session_id)?;
         if let Some(summary) = data.latest_summary
             && summary.len() > 1
-                && let Some(tags) = summary[1].get("message_meta_tags")
-                    && let Some(tags_arr) = tags.as_array() {
-                        return Ok(tags_arr.iter().any(|t| t.as_str() == Some("Compact")));
-                    }
+            && let Some(tags) = summary[1].get("message_meta_tags")
+            && let Some(tags_arr) = tags.as_array()
+        {
+            return Ok(tags_arr.iter().any(|t| t.as_str() == Some("Compact")));
+        }
         Ok(false)
     }
 

@@ -28,10 +28,7 @@ pub enum KsmError {
     ChainConflict(String),
 
     #[error("Metadata conflict: child {child_id} has different metadata from parent {parent_id}")]
-    MetadataConflict {
-        child_id: String,
-        parent_id: String,
-    },
+    MetadataConflict { child_id: String, parent_id: String },
 
     #[error("kiro-cli error: {0}")]
     KiroCli(String),

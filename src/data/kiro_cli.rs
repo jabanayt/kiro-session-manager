@@ -64,16 +64,17 @@ fn parse_time_ago_to_ms(time_ago: &str, now_ms: i64) -> i64 {
     // Returns approximate timestamp. Defaults to now_ms if unparseable.
     let parts: Vec<&str> = time_ago.split_whitespace().collect();
     if parts.len() >= 2
-        && let Ok(n) = parts[0].parse::<i64>() {
-            let ms = match parts[1] {
-                s if s.starts_with("second") => n * 1000,
-                s if s.starts_with("minute") => n * 60 * 1000,
-                s if s.starts_with("hour") => n * 3600 * 1000,
-                s if s.starts_with("day") => n * 86400 * 1000,
-                _ => 0,
-            };
-            return now_ms - ms;
-        }
+        && let Ok(n) = parts[0].parse::<i64>()
+    {
+        let ms = match parts[1] {
+            s if s.starts_with("second") => n * 1000,
+            s if s.starts_with("minute") => n * 60 * 1000,
+            s if s.starts_with("hour") => n * 3600 * 1000,
+            s if s.starts_with("day") => n * 86400 * 1000,
+            _ => 0,
+        };
+        return now_ms - ms;
+    }
     now_ms
 }
 
