@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 
 use crate::cli::display;
-use crate::data::{HybridSource, JsonMetadataStore, MetadataStore, SessionSource};
+use crate::data::{HybridSource, MetadataStore, SessionSource, SqliteMetadataStore};
 use crate::services::{chains, delete, metadata, resume, sessions};
 
 // --- Clap definitions (from current main.rs lines 15-87) ---
@@ -87,7 +87,31 @@ pub enum Commands {
 /// Main CLI dispatch. Called from main.rs.
 pub fn run(cli: Cli) -> Result<()> {
     let source = HybridSource::new();
-    let store = JsonMetadataStore::from_config().context("Failed to initialise metadata store")?;
+    let store =
+        SqliteMetadataStore::from_config().context("Failed to initialise metadata store")?;
+
+    // One-time migration from JSON (idempotent -- skips if JSON doesn't exist
+    // or if metadata table already has data)
+    let existing_count = store
+        .load()
+        .context("Failed to check existing metadata")?
+        .len();
+
+    if existing_count == 0 {
+        match store.migrate_from_json() {
+            Ok(migrated) if migrated > 0 => {
+                println!(
+                    "✓ Migrated {} metadata entries from JSON to SQLite",
+                    migrated
+                );
+            }
+            Ok(_) => {} // No JSON file or empty, silent
+            Err(e) => {
+                eprintln!("⚠ Warning: Failed to migrate from JSON: {}", e);
+                eprintln!("⚠ Continuing with empty metadata store");
+            }
+        }
+    }
 
     match cli.command {
         Commands::List {
