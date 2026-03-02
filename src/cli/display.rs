@@ -165,25 +165,28 @@ pub fn print_session_list(
 ///
 /// Shows: archive name, exchange index, and content snippets.
 pub fn format_search_result(result: &SearchResult, index: usize) -> String {
+    let highlight_on = "\x1b[1;7m";
+    let highlight_off = "\x1b[0m";
+
     let user_snippet = result
         .user_snippet
-        .replace(">>>", "\x1b[1m")
-        .replace("<<<", "\x1b[0m");
+        .replace(">>>", highlight_on)
+        .replace("<<<", highlight_off);
     let assistant_snippet = result
         .assistant_snippet
-        .replace(">>>", "\x1b[1m")
-        .replace("<<<", "\x1b[0m");
+        .replace(">>>", highlight_on)
+        .replace("<<<", highlight_off);
 
     let mut output = format!(
-        "[{}] {} (exchange #{})\n    User: {}\n    Assistant: {}",
+        "\x1b[90m──────────────────────────────────────── [{}] ────\x1b[0m\n{} -- exchange #{}\n    \x1b[32mUser:\x1b[0m {}\n    ----\n    {}",
         index, result.archive_name, result.exchange_index, user_snippet, assistant_snippet
     );
 
     if let Some(tool_snippet) = &result.tool_snippet {
         let tool_highlighted = tool_snippet
-            .replace(">>>", "\x1b[1m")
-            .replace("<<<", "\x1b[0m");
-        output.push_str(&format!("\n    Tools: {}", tool_highlighted));
+            .replace(">>>", highlight_on)
+            .replace("<<<", highlight_off);
+        output.push_str(&format!("\n    \x1b[33mTools:\x1b[0m {}", tool_highlighted));
     }
 
     output
@@ -207,24 +210,23 @@ pub fn print_search_results(results: &[SearchResult]) {
 /// Format an expanded exchange (full content, not snippet).
 pub fn print_expanded_exchange(chunk: &Chunk, archive_name: &str) {
     println!(
-        "--- {}, exchange #{} ---",
+        "\x1b[90m──── \x1b[0m{} -- exchange #{}\x1b[90m ────\x1b[0m",
         archive_name, chunk.exchange_index
     );
     println!();
-    println!("User:");
+    println!("\x1b[32mUser:\x1b[0m");
     println!("{}", chunk.user_content);
     println!();
-    println!("Assistant:");
+    println!("\x1b[34mAssistant:\x1b[0m");
     println!("{}", chunk.assistant_content);
 
     if let Some(tool_summary) = &chunk.tool_summary {
         println!();
-        println!("Tools:");
+        println!("\x1b[33mTools:\x1b[0m");
         println!("{}", tool_summary);
     }
 
     println!();
-    println!("---");
 }
 
 /// Format an archive for the list-archives display.
@@ -232,7 +234,10 @@ pub fn format_archive_list_entry(archive: &Archive) -> String {
     let time_ago = format_time_ago(archive.archived_at);
     let msg_count = format_msg_count(archive.message_count);
 
-    let mut output = format!("{} | {} | archived {}", archive.name, msg_count, time_ago);
+    let mut output = format!(
+        "\x1b[1m{}\x1b[0m | \x1b[90m{} | archived {}\x1b[0m",
+        archive.name, msg_count, time_ago
+    );
 
     if !archive.tags.is_empty() {
         let tags: Vec<&str> = archive.tags.iter().map(|s| s.as_str()).collect();
@@ -240,7 +245,7 @@ pub fn format_archive_list_entry(archive: &Archive) -> String {
     }
 
     if archive.pruned {
-        output.push_str("\n  [pruned]");
+        output.push_str("\n  \x1b[33m[pruned]\x1b[0m");
     }
 
     output
@@ -267,12 +272,12 @@ pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
     let msg_count = format_msg_count(archive.message_count);
 
     println!(
-        "\n{} | {} | session {} | archived {}",
+        "\n\x1b[1m{}\x1b[0m | {} | session {} | archived {}",
         archive.name, msg_count, session_date, archived_date
     );
 
     if archive.pruned {
-        println!("[pruned]");
+        println!("\x1b[33m[pruned]\x1b[0m");
     }
 
     if !archive.tags.is_empty() {
@@ -282,18 +287,36 @@ pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
 
     println!();
 
+    let max_lines = 10;
+
     for chunk in chunks {
-        println!("--- Exchange {} ---", chunk.exchange_index);
+        println!(
+            "\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m",
+            chunk.exchange_index
+        );
         println!();
-        println!("User:");
+        println!("\x1b[32mUser:\x1b[0m");
         println!("{}", chunk.user_content);
         println!();
-        println!("Assistant:");
-        println!("{}", chunk.assistant_content);
+        println!("\x1b[34mAssistant:\x1b[0m");
+
+        let lines: Vec<&str> = chunk.assistant_content.lines().collect();
+        if lines.len() > max_lines {
+            for line in &lines[..max_lines] {
+                println!("{}", line);
+            }
+            println!(
+                "\x1b[90m    ... ({} more lines, use --exchange {} to view)\x1b[0m",
+                lines.len() - max_lines,
+                chunk.exchange_index
+            );
+        } else {
+            println!("{}", chunk.assistant_content);
+        }
 
         if let Some(tool_summary) = &chunk.tool_summary {
             println!();
-            println!("Tools:");
+            println!("\x1b[33mTools:\x1b[0m");
             println!("{}", tool_summary);
         }
 
@@ -303,17 +326,24 @@ pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
 
 /// Print a single exchange from show-archive --exchange N.
 pub fn print_single_exchange(archive: &Archive, chunk: &Chunk) {
-    println!("\n{}, exchange #{}", archive.name, chunk.exchange_index);
+    println!(
+        "\n\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m",
+        chunk.exchange_index
+    );
+    println!(
+        "\x1b[1m{}\x1b[0m -- exchange #{}",
+        archive.name, chunk.exchange_index
+    );
     println!();
-    println!("User:");
+    println!("\x1b[32mUser:\x1b[0m");
     println!("{}", chunk.user_content);
     println!();
-    println!("Assistant:");
+    println!("\x1b[34mAssistant:\x1b[0m");
     println!("{}", chunk.assistant_content);
 
     if let Some(tool_summary) = &chunk.tool_summary {
         println!();
-        println!("Tools:");
+        println!("\x1b[33mTools:\x1b[0m");
         println!("{}", tool_summary);
     }
 
