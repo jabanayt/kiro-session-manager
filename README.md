@@ -14,7 +14,7 @@ Kiro-CLI creates a new session every time you quit, leading to:
 
 ## Solution
 
-`ksm` provides a simple interface to list, delete, tag, and resume sessions by index numbers.
+`ksm` provides a simple interface to list, delete, tag, resume, archive, and search sessions by index numbers.
 
 ## Quick Start
 
@@ -50,6 +50,10 @@ ksm r 0
 
 # Tag a session
 ksm tag 0 work urgent
+
+# Archive and search sessions
+ksm archive 0 --name "planning" --tags "work"
+ksm search "planning"
 ```
 
 See [Usage Guide](docs/USAGE.md) for all commands and features.

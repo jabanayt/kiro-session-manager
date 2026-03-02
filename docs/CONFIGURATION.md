@@ -1,12 +1,14 @@
 # Configuration
 
-KSM uses `~/.ksm/config.toml` to configure metadata storage location. The config file is created automatically on first run.
+KSM uses `~/.ksm/config.toml` to configure storage location. The config file is created automatically on first run.
+
+Metadata and archives are stored in a SQLite database (`ksm.db`). On first run after upgrading from an older version, existing `metadata.json` data is migrated automatically.
 
 ## Storage Modes
 
 ### Global (default)
 
-Metadata stored in `~/.ksm/metadata.json`. Sessions are still filtered by current directory.
+Data stored in `~/.ksm/ksm.db`. Sessions are still filtered by current directory.
 
 ```toml
 metadata_storage = "global"
@@ -14,7 +16,7 @@ metadata_storage = "global"
 
 ### Local
 
-Metadata stored per-directory in `.kiro/ksm-metadata.json`.
+Data stored per-directory in `.kiro/ksm.db`.
 
 ```toml
 metadata_storage = "local"
@@ -22,18 +24,18 @@ metadata_storage = "local"
 
 ### Custom
 
-Metadata stored at a user-specified path.
+Data stored at a user-specified path.
 
 ```toml
 metadata_storage = "custom"
-custom_path = "/path/to/metadata.json"
+custom_path = "/path/to/ksm.db"
 ```
 
 ## Which Mode to Choose
 
-- **Global mode:** All metadata stored in one file, but sessions are still filtered by current directory
-- **Local mode:** Isolates metadata per project, prevents cross-project interference
-- **Custom mode:** Store metadata wherever you prefer (network drive, etc.)
+- **Global mode:** All data stored in one database, but sessions are still filtered by current directory
+- **Local mode:** Isolates data per project, prevents cross-project interference
+- **Custom mode:** Store data wherever you prefer (network drive, etc.)
 
 ## Auto-Detection
 
