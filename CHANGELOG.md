@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-03-02
+
+### Added
+
+- Session archiving with FTS5 full-text search
+- Commands: archive, search, list-archives, show-archive, delete-archive
+- Coloured labels (User/Assistant/Tools) in archive display
+- Visual separators between exchanges in show-archive and search
+- Truncated assistant content in full archive view (10 lines)
+- Reverse video highlighting for search term matches
+
+### Changed
+
+- Metadata storage migrated from JSON to SQLite (automatic one-time migration)
+- Conversation model refactored to typed enums (ConversationData, UserContent, AssistantContent)
+- Archive list formatting: bold names, dim metadata, yellow pruned flag
+
+### Fixed
+
+- is_pruned() false positive: use exact match instead of substring contains, remove tool call args check
+
 ## [0.2.1] - 2026-03-01
 
 ### Added
