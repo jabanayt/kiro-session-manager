@@ -3,8 +3,12 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 
 use crate::cli::display;
-use crate::data::{HybridSource, JsonMetadataStore, MetadataStore, SessionSource};
-use crate::services::{chains, delete, metadata, resume, sessions};
+use crate::data::{
+    ArchiveStore, HybridSource, MetadataStore, SessionSource, SqliteArchiveStore,
+    SqliteMetadataStore,
+};
+use crate::error::KsmError;
+use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 // --- Clap definitions (from current main.rs lines 15-87) ---
 
@@ -82,16 +86,84 @@ pub enum Commands {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Archive a session for future search
+    Archive {
+        /// Session index to archive
+        index: usize,
+        /// Archive name (prompted if not provided)
+        #[arg(long)]
+        name: Option<String>,
+        /// Tags (space-separated, prompted if not provided)
+        #[arg(long)]
+        tags: Option<Vec<String>>,
+    },
+
+    /// Search archived sessions
+    Search {
+        /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
+        query: String,
+        /// Maximum number of results (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: u32,
+        /// Show full exchange for result N
+        #[arg(long)]
+        expand: Option<usize>,
+    },
+
+    /// List all archives for the current project
+    ListArchives,
+
+    /// Delete an archive and all its indexed content
+    DeleteArchive {
+        /// Archive name to delete
+        name: String,
+    },
+
+    /// Browse a full archived conversation
+    ShowArchive {
+        /// Archive name to browse
+        name: String,
+        /// Jump to a specific exchange
+        #[arg(long)]
+        exchange: Option<i32>,
+    },
 }
 
 /// Main CLI dispatch. Called from main.rs.
 pub fn run(cli: Cli) -> Result<()> {
     let source = HybridSource::new();
-    let store = JsonMetadataStore::from_config()
-        .context("Failed to initialise metadata store")?;
+    let store =
+        SqliteMetadataStore::from_config().context("Failed to initialise metadata store")?;
+
+    // One-time migration from JSON (idempotent -- skips if JSON doesn't exist
+    // or if metadata table already has data)
+    let existing_count = store
+        .load()
+        .context("Failed to check existing metadata")?
+        .len();
+
+    if existing_count == 0 {
+        match store.migrate_from_json() {
+            Ok(migrated) if migrated > 0 => {
+                println!(
+                    "✓ Migrated {} metadata entries from JSON to SQLite",
+                    migrated
+                );
+            }
+            Ok(_) => {} // No JSON file or empty, silent
+            Err(e) => {
+                eprintln!("⚠ Warning: Failed to migrate from JSON: {}", e);
+                eprintln!("⚠ Continuing with empty metadata store");
+            }
+        }
+    }
 
     match cli.command {
-        Commands::List { show_parents, compare_methods } => {
+        Commands::List {
+            show_parents,
+            compare_methods,
+        } => {
             if compare_methods {
                 cmd_compare_methods()?;
             } else {
@@ -113,10 +185,18 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::CleanMetadata => {
             cmd_clean_metadata(&source, &store)?;
         }
-        Commands::Resume { index, last, tag, name } => {
+        Commands::Resume {
+            index,
+            last,
+            tag,
+            name,
+        } => {
             cmd_resume(&source, &store, index, last, tag, name)?;
         }
-        Commands::Link { child_index, parent_index } => {
+        Commands::Link {
+            child_index,
+            parent_index,
+        } => {
             cmd_link(&source, &store, child_index, parent_index)?;
         }
         Commands::Unlink { index, keep } => {
@@ -124,6 +204,53 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Commands::DetectLinks { force } => {
             cmd_detect_links(&source, &store, force)?;
+        }
+        Commands::Archive { index, name, tags } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_archive(
+                &source,
+                &store,
+                &archive_store,
+                index,
+                name,
+                tags,
+                &directory,
+            )?;
+        }
+        Commands::Search {
+            query,
+            limit,
+            expand,
+        } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_search(&archive_store, &query, limit, expand, &directory)?;
+        }
+        Commands::ListArchives => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_list_archives(&archive_store, &directory)?;
+        }
+        Commands::DeleteArchive { name } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_delete_archive(&archive_store, &name, &directory)?;
+        }
+        Commands::ShowArchive { name, exchange } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_show_archive(&archive_store, &name, exchange, &directory)?;
         }
     }
 
@@ -153,7 +280,12 @@ fn cmd_list(
     }
 
     let visible = sessions::visible_session_indices(&result.all_sessions, &result.metadata);
-    display::print_session_list(&result.all_sessions, &result.metadata, &visible, show_parents);
+    display::print_session_list(
+        &result.all_sessions,
+        &result.metadata,
+        &visible,
+        show_parents,
+    );
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
     Ok(())
@@ -204,7 +336,9 @@ fn cmd_delete(
             print!("\nSession [{}] is part of a chain: ", idx);
             for (i, chain_id) in chain_ctx.ordered_ids.iter().enumerate() {
                 if let Some(chain_idx) = all_sessions.iter().position(|s| &s.id == chain_id) {
-                    if i > 0 { print!(" → "); }
+                    if i > 0 {
+                        print!(" → ");
+                    }
                     print!("[{}]", chain_idx);
                 }
             }
@@ -230,13 +364,21 @@ fn cmd_delete(
             };
 
             let result = delete::delete_from_chain(
-                &session.id, chain_choice, all_sessions, &mut meta, source, store,
+                &session.id,
+                chain_choice,
+                all_sessions,
+                &mut meta,
+                source,
+                store,
             )?;
 
             match choice {
                 "1" => println!("\n✓ Deleted [{}] and relinked chain", idx),
                 "2" => println!("\n✓ Deleted {} session(s)", result.deleted_ids.len()),
-                "3" => println!("\n✓ Deleted entire chain ({} sessions)", result.deleted_ids.len()),
+                "3" => println!(
+                    "\n✓ Deleted entire chain ({} sessions)",
+                    result.deleted_ids.len()
+                ),
                 _ => {}
             }
             return Ok(());
@@ -263,7 +405,10 @@ fn cmd_delete(
         }
     }
 
-    let ids: Vec<String> = indices.iter().map(|&i| all_sessions[i].id.clone()).collect();
+    let ids: Vec<String> = indices
+        .iter()
+        .map(|&i| all_sessions[i].id.clone())
+        .collect();
     println!("\nDeleting {} session(s)...", ids.len());
     delete::delete_sessions(&ids, source, &mut meta, store)?;
     println!("\nDone!");
@@ -295,7 +440,11 @@ fn cmd_name(
     let result = metadata::set_name(scope, name, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Set name for {} sessions: {}", result.affected_ids.len(), name);
+        println!(
+            "\n✓ Set name for {} sessions: {}",
+            result.affected_ids.len(),
+            name
+        );
     } else {
         println!("Set name for session [{}]: {}", index, name);
     }
@@ -327,7 +476,11 @@ fn cmd_tag(
     let result = metadata::add_tags(scope, tags, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Added tags to {} sessions: {}", result.affected_ids.len(), tags.join(", "));
+        println!(
+            "\n✓ Added tags to {} sessions: {}",
+            result.affected_ids.len(),
+            tags.join(", ")
+        );
     } else {
         println!("Added tags to session [{}]: {}", index, tags.join(", "));
     }
@@ -359,7 +512,11 @@ fn cmd_untag(
     let result = metadata::remove_tags(scope, tags, all_sessions, &mut meta, store)?;
 
     if result.affected_ids.len() > 1 {
-        println!("\n✓ Removed tags from {} sessions: {}", result.affected_ids.len(), tags.join(", "));
+        println!(
+            "\n✓ Removed tags from {} sessions: {}",
+            result.affected_ids.len(),
+            tags.join(", ")
+        );
     } else {
         println!("Removed tags from session [{}]: {}", index, tags.join(", "));
     }
@@ -368,10 +525,7 @@ fn cmd_untag(
 }
 
 /// Clean metadata command.
-fn cmd_clean_metadata(
-    source: &dyn SessionSource,
-    store: &dyn MetadataStore,
-) -> Result<()> {
+fn cmd_clean_metadata(source: &dyn SessionSource, store: &dyn MetadataStore) -> Result<()> {
     let all_sessions = source.list_sessions().context("Failed to list sessions")?;
     let mut meta = store.load().context("Failed to load metadata")?;
 
@@ -415,14 +569,19 @@ fn cmd_resume(
             return Ok(());
         }
 
-        let visible = sessions::visible_session_indices(
-            &list_result.all_sessions, &list_result.metadata,
-        );
+        let visible =
+            sessions::visible_session_indices(&list_result.all_sessions, &list_result.metadata);
         display::print_session_list(
-            &list_result.all_sessions, &list_result.metadata, &visible, false,
+            &list_result.all_sessions,
+            &list_result.metadata,
+            &visible,
+            false,
         );
 
-        print!("\nSelect session (0-{}): ", list_result.all_sessions.len() - 1);
+        print!(
+            "\nSelect session (0-{}): ",
+            list_result.all_sessions.len() - 1
+        );
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -454,7 +613,11 @@ fn cmd_resume(
             let selection: usize = input.trim().parse().context("Invalid number")?;
 
             if selection >= matches.len() {
-                anyhow::bail!("Index {} out of range (max: {})", selection, matches.len() - 1);
+                anyhow::bail!(
+                    "Index {} out of range (max: {})",
+                    selection,
+                    matches.len() - 1
+                );
             }
 
             let retry_target = resume::ResumeTarget::Index(matches[selection].original_index);
@@ -509,7 +672,12 @@ fn cmd_link(
                 if !parent_meta.tags.is_empty() {
                     println!(
                         "  Tags: {}",
-                        parent_meta.tags.iter().cloned().collect::<Vec<_>>().join(", ")
+                        parent_meta
+                            .tags
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                 }
             } else {
@@ -530,14 +698,22 @@ fn cmd_link(
         Err(e) => return Err(e.into()),
     };
 
-    println!("✓ Linked session [{}] to parent [{}]", child_index, parent_index);
+    println!(
+        "✓ Linked session [{}] to parent [{}]",
+        child_index, parent_index
+    );
     if let Some(name) = &result.inherited_name {
         println!("✓ Inherited name: \"{}\"", name);
     }
     if !result.inherited_tags.is_empty() {
         println!(
             "✓ Inherited tags: {}",
-            result.inherited_tags.iter().cloned().collect::<Vec<_>>().join(", ")
+            result
+                .inherited_tags
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -608,16 +784,20 @@ fn cmd_detect_links(
     }
 
     for candidate in candidates {
-        let child_idx = all_sessions.iter().position(|s| s.id == candidate.child.id).unwrap();
-        let parent_idx = all_sessions.iter().position(|s| s.id == candidate.parent_id).unwrap();
+        let child_idx = all_sessions
+            .iter()
+            .position(|s| s.id == candidate.child.id)
+            .unwrap();
+        let parent_idx = all_sessions
+            .iter()
+            .position(|s| s.id == candidate.parent_id)
+            .unwrap();
         let parent = &all_sessions[parent_idx];
 
-        let child_display = display::format_session_display(
-            &candidate.child, &meta, all_sessions, false, false,
-        );
-        let parent_display = display::format_session_display(
-            parent, &meta, all_sessions, false, false,
-        );
+        let child_display =
+            display::format_session_display(&candidate.child, &meta, all_sessions, false, false);
+        let parent_display =
+            display::format_session_display(parent, &meta, all_sessions, false, false);
         let child_time = display::format_time_ago(candidate.child.updated_at);
         let parent_time = display::format_time_ago(parent.updated_at);
 
@@ -631,11 +811,203 @@ fn cmd_detect_links(
         io::stdin().read_line(&mut input)?;
 
         if input.trim().eq_ignore_ascii_case("y") {
-            chains::link_sessions(&candidate.child.id, &candidate.parent_id, true, &mut meta, store)?;
+            chains::link_sessions(
+                &candidate.child.id,
+                &candidate.parent_id,
+                true,
+                &mut meta,
+                store,
+            )?;
             println!("✓ Linked [{}] to [{}]\n", child_idx, parent_idx);
         } else {
             println!("Skipped.\n");
         }
+    }
+
+    Ok(())
+}
+
+/// Archive a session.
+fn cmd_archive(
+    source: &dyn SessionSource,
+    store: &dyn MetadataStore,
+    archive_store: &dyn ArchiveStore,
+    index: usize,
+    name_flag: Option<String>,
+    tags_flag: Option<Vec<String>>,
+    directory: &str,
+) -> Result<()> {
+    let list_result = sessions::list_sessions(source, store)?;
+    sessions::validate_index(index, list_result.all_sessions.len())?;
+    let session = &list_result.all_sessions[index];
+
+    println!(
+        "Archiving session [{}] \"{}\" ({} messages)",
+        index, session.preview, session.msg_count
+    );
+
+    // Resolve name
+    let name = if let Some(name) = name_flag {
+        name
+    } else {
+        let meta = list_result.metadata.get(&session.id);
+        let existing_name = meta.and_then(|m| m.name.as_deref()).unwrap_or("");
+        print!("Name [{}]: ", existing_name);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            if existing_name.is_empty() {
+                anyhow::bail!("Archive name is required.");
+            }
+            existing_name.to_string()
+        } else {
+            input.to_string()
+        }
+    };
+
+    // Resolve tags
+    let tags = if let Some(tags) = tags_flag {
+        tags
+    } else {
+        let meta = list_result.metadata.get(&session.id);
+        let existing_tags: Vec<String> = meta
+            .map(|m| {
+                let mut tags: Vec<String> = m.tags.iter().cloned().collect();
+                tags.sort();
+                tags
+            })
+            .unwrap_or_default();
+        let existing_display = existing_tags.join(", ");
+        print!("Tags [{}]: ", existing_display);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            existing_tags
+        } else {
+            input.split_whitespace().map(|s| s.to_string()).collect()
+        }
+    };
+
+    let result = archive::archive_session(
+        &session.id,
+        &name,
+        tags,
+        session.created_at,
+        directory,
+        source,
+        archive_store,
+    )?;
+
+    print!(
+        "Archived as '{}' ({} exchanges, {} messages)",
+        result.archive_name, result.chunk_count, result.message_count
+    );
+    if result.pruned {
+        print!(" [pruned]");
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Search archives.
+fn cmd_search(
+    archive_store: &dyn ArchiveStore,
+    query: &str,
+    limit: u32,
+    expand: Option<usize>,
+    directory: &str,
+) -> Result<()> {
+    let results = archive::search_archives(query, limit, directory, archive_store)?;
+
+    if let Some(n) = expand {
+        if n >= results.len() {
+            anyhow::bail!(
+                "Result index {} out of range (0 to {}).",
+                n,
+                results.len().saturating_sub(1)
+            );
+        }
+        let chunk = archive::get_expanded_result(
+            &results[n].archive_name,
+            results[n].exchange_index,
+            directory,
+            archive_store,
+        )?;
+        display::print_expanded_exchange(&chunk, &results[n].archive_name);
+    } else {
+        display::print_search_results(&results);
+    }
+
+    Ok(())
+}
+
+/// List archives.
+fn cmd_list_archives(archive_store: &dyn ArchiveStore, directory: &str) -> Result<()> {
+    let archives = archive::list_archives(directory, archive_store)?;
+    display::print_archive_list(&archives);
+    Ok(())
+}
+
+/// Delete an archive.
+fn cmd_delete_archive(archive_store: &dyn ArchiveStore, name: &str, directory: &str) -> Result<()> {
+    let archive_info = archive::get_archive_info(name, directory, archive_store)?;
+
+    print!(
+        "Delete archive '{}' ({} messages)? [y/N] ",
+        name, archive_info.message_count
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    if input.trim() != "y" && input.trim() != "Y" {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let result = archive::delete_archive(name, directory, archive_store)?;
+    println!(
+        "Deleted archive '{}' ({} messages)",
+        result.archive_name, result.message_count
+    );
+
+    Ok(())
+}
+
+/// Show a full archived conversation.
+fn cmd_show_archive(
+    archive_store: &dyn ArchiveStore,
+    name: &str,
+    exchange: Option<i32>,
+    directory: &str,
+) -> Result<()> {
+    let result = archive::show_archive(name, directory, archive_store)?;
+
+    if result.chunks.is_empty() {
+        return Err(KsmError::InvalidInput(format!("Archive '{}' has no content.", name)).into());
+    }
+
+    if let Some(n) = exchange {
+        let chunk = result
+            .chunks
+            .iter()
+            .find(|c| c.exchange_index == n)
+            .ok_or_else(|| {
+                KsmError::InvalidInput(format!(
+                    "Exchange {} not found. Archive has {} exchanges (0 to {}).",
+                    n,
+                    result.chunks.len(),
+                    result.chunks.len() - 1
+                ))
+            })?;
+        display::print_single_exchange(&result.archive, chunk);
+    } else {
+        display::print_full_archive(&result.archive, &result.chunks);
     }
 
     Ok(())
@@ -674,13 +1046,20 @@ fn cmd_compare_methods() -> Result<()> {
         let mut current_idx = None;
         for diff in &result.differences {
             if current_idx != Some(diff.index) {
-                if current_idx.is_some() { eprintln!(); }
+                if current_idx.is_some() {
+                    eprintln!();
+                }
                 eprintln!("Session [{}] differences:", diff.index);
                 current_idx = Some(diff.index);
             }
-            eprintln!("  {}: DB='{}' vs CLI='{}'", diff.field, diff.source_a, diff.source_b);
+            eprintln!(
+                "  {}: DB='{}' vs CLI='{}'",
+                diff.field, diff.source_a, diff.source_b
+            );
         }
-        let session_count = result.differences.iter()
+        let session_count = result
+            .differences
+            .iter()
             .map(|d| d.index)
             .collect::<std::collections::HashSet<_>>()
             .len();

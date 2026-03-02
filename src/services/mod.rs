@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod chains;
 pub mod delete;
 pub mod metadata;

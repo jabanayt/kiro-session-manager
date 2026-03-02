@@ -14,6 +14,11 @@
 | `ksm unlink` | | Unlink a child session from its parent |
 | `ksm detect-links` | | Auto-detect and link compacted sessions |
 | `ksm clean-metadata` | | Clean up metadata for deleted sessions |
+| `ksm archive` | | Archive a session for search |
+| `ksm search` | | Search archived sessions |
+| `ksm list-archives` | | List all archives |
+| `ksm show-archive` | | View an archived conversation |
+| `ksm delete-archive` | | Delete an archive |
 
 ## Listing Sessions
 
@@ -251,6 +256,66 @@ ksm clean-metadata
 ```
 
 Removes metadata entries for sessions that no longer exist (e.g., deleted outside of KSM via kiro-cli directly). Only affects sessions from the current directory.
+
+## Archiving Sessions
+
+Archive valuable sessions to preserve them with full-text search capability.
+
+### Archive a Session
+
+```bash
+ksm archive <index>
+```
+
+Prompts for a name and optional tags. Or provide them directly:
+
+```bash
+ksm archive 0 --name "Project Planning" --tags "work planning"
+```
+
+Archives store the full conversation broken into searchable exchanges.
+
+### Search Archives
+
+```bash
+ksm search "query terms"
+```
+
+Searches across all archives in the current project directory.
+Matched terms are highlighted in results.
+Supports FTS5 query syntax: `"exact phrase"`, `term1 AND term2`, `term1 OR term2`, `term1 NOT term2`.
+
+To view the full exchange for a search result:
+
+```bash
+ksm search "query" --expand 0
+```
+
+### List Archives
+
+```bash
+ksm list-archives
+```
+
+Shows all archives for the current project directory with name, message count, age, and tags.
+
+### View an Archive
+
+```bash
+# Full conversation (assistant content truncated to 10 lines per exchange)
+ksm show-archive "Project Planning"
+
+# Single exchange in full
+ksm show-archive "Project Planning" --exchange 3
+```
+
+### Delete an Archive
+
+```bash
+ksm delete-archive "Project Planning"
+```
+
+Prompts for confirmation before deleting the archive and all its indexed content.
 
 ## Configuration
 

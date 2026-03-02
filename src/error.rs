@@ -28,10 +28,7 @@ pub enum KsmError {
     ChainConflict(String),
 
     #[error("Metadata conflict: child {child_id} has different metadata from parent {parent_id}")]
-    MetadataConflict {
-        child_id: String,
-        parent_id: String,
-    },
+    MetadataConflict { child_id: String, parent_id: String },
 
     #[error("kiro-cli error: {0}")]
     KiroCli(String),
@@ -41,6 +38,18 @@ pub enum KsmError {
 
     #[error("No sessions found")]
     NoSessions,
+
+    #[error("Archive not found: {0}")]
+    ArchiveNotFound(String),
+
+    #[error("Session already archived as '{0}'")]
+    AlreadyArchived(String),
+
+    #[error("Search error: {0}")]
+    SearchError(String),
+
+    #[error("Schema version mismatch: expected {expected}, found {found}")]
+    SchemaVersionMismatch { expected: i64, found: i64 },
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
