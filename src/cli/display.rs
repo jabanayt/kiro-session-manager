@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{Session, SessionMetadata};
+use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata};
 
 /// Format a millisecond timestamp as a relative time string.
 ///
@@ -159,4 +159,163 @@ pub fn print_session_list(
             println!("[{}] {} | {} | {}", idx, time_ago, msg_count, display);
         }
     }
+}
+
+/// Format a search result for display.
+///
+/// Shows: archive name, exchange index, and content snippets.
+pub fn format_search_result(result: &SearchResult, index: usize) -> String {
+    let user_snippet = result
+        .user_snippet
+        .replace(">>>", "\x1b[1m")
+        .replace("<<<", "\x1b[0m");
+    let assistant_snippet = result
+        .assistant_snippet
+        .replace(">>>", "\x1b[1m")
+        .replace("<<<", "\x1b[0m");
+
+    let mut output = format!(
+        "[{}] {} (exchange #{})\n    User: {}\n    Assistant: {}",
+        index, result.archive_name, result.exchange_index, user_snippet, assistant_snippet
+    );
+
+    if let Some(tool_snippet) = &result.tool_snippet {
+        let tool_highlighted = tool_snippet
+            .replace(">>>", "\x1b[1m")
+            .replace("<<<", "\x1b[0m");
+        output.push_str(&format!("\n    Tools: {}", tool_highlighted));
+    }
+
+    output
+}
+
+/// Print search results list.
+pub fn print_search_results(results: &[SearchResult]) {
+    if results.is_empty() {
+        println!("No results found.");
+        return;
+    }
+
+    for (i, result) in results.iter().enumerate() {
+        println!("{}", format_search_result(result, i));
+        println!();
+    }
+
+    println!("Use --expand N to show the full exchange for result N.");
+}
+
+/// Format an expanded exchange (full content, not snippet).
+pub fn print_expanded_exchange(chunk: &Chunk, archive_name: &str) {
+    println!(
+        "--- {}, exchange #{} ---",
+        archive_name, chunk.exchange_index
+    );
+    println!();
+    println!("User:");
+    println!("{}", chunk.user_content);
+    println!();
+    println!("Assistant:");
+    println!("{}", chunk.assistant_content);
+
+    if let Some(tool_summary) = &chunk.tool_summary {
+        println!();
+        println!("Tools:");
+        println!("{}", tool_summary);
+    }
+
+    println!();
+    println!("---");
+}
+
+/// Format an archive for the list-archives display.
+pub fn format_archive_list_entry(archive: &Archive) -> String {
+    let time_ago = format_time_ago(archive.archived_at);
+    let msg_count = format_msg_count(archive.message_count);
+
+    let mut output = format!("{} | {} | archived {}", archive.name, msg_count, time_ago);
+
+    if !archive.tags.is_empty() {
+        let tags: Vec<&str> = archive.tags.iter().map(|s| s.as_str()).collect();
+        output.push_str(&format!("\n  Tags: {}", tags.join(", ")));
+    }
+
+    if archive.pruned {
+        output.push_str("\n  [pruned]");
+    }
+
+    output
+}
+
+/// Print the full list of archives.
+pub fn print_archive_list(archives: &[Archive]) {
+    if archives.is_empty() {
+        println!("No archives found.");
+        return;
+    }
+
+    println!("\nArchived Sessions:\n");
+    for archive in archives {
+        println!("{}", format_archive_list_entry(archive));
+        println!();
+    }
+}
+
+/// Print a full archived conversation (show-archive).
+pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
+    let session_date = format_time_ago(archive.session_created_at);
+    let archived_date = format_time_ago(archive.archived_at);
+    let msg_count = format_msg_count(archive.message_count);
+
+    println!(
+        "\n{} | {} | session {} | archived {}",
+        archive.name, msg_count, session_date, archived_date
+    );
+
+    if archive.pruned {
+        println!("[pruned]");
+    }
+
+    if !archive.tags.is_empty() {
+        let tags: Vec<&str> = archive.tags.iter().map(|s| s.as_str()).collect();
+        println!("Tags: {}", tags.join(", "));
+    }
+
+    println!();
+
+    for chunk in chunks {
+        println!("--- Exchange {} ---", chunk.exchange_index);
+        println!();
+        println!("User:");
+        println!("{}", chunk.user_content);
+        println!();
+        println!("Assistant:");
+        println!("{}", chunk.assistant_content);
+
+        if let Some(tool_summary) = &chunk.tool_summary {
+            println!();
+            println!("Tools:");
+            println!("{}", tool_summary);
+        }
+
+        println!();
+    }
+}
+
+/// Print a single exchange from show-archive --exchange N.
+pub fn print_single_exchange(archive: &Archive, chunk: &Chunk) {
+    println!("\n{}, exchange #{}", archive.name, chunk.exchange_index);
+    println!();
+    println!("User:");
+    println!("{}", chunk.user_content);
+    println!();
+    println!("Assistant:");
+    println!("{}", chunk.assistant_content);
+
+    if let Some(tool_summary) = &chunk.tool_summary {
+        println!();
+        println!("Tools:");
+        println!("{}", tool_summary);
+    }
+
+    println!();
 }

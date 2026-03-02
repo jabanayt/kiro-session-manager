@@ -3,8 +3,12 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 
 use crate::cli::display;
-use crate::data::{HybridSource, MetadataStore, SessionSource, SqliteMetadataStore};
-use crate::services::{chains, delete, metadata, resume, sessions};
+use crate::data::{
+    ArchiveStore, HybridSource, MetadataStore, SessionSource, SqliteArchiveStore,
+    SqliteMetadataStore,
+};
+use crate::error::KsmError;
+use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 // --- Clap definitions (from current main.rs lines 15-87) ---
 
@@ -82,6 +86,48 @@ pub enum Commands {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Archive a session for future search
+    Archive {
+        /// Session index to archive
+        index: usize,
+        /// Archive name (prompted if not provided)
+        #[arg(long)]
+        name: Option<String>,
+        /// Tags (space-separated, prompted if not provided)
+        #[arg(long)]
+        tags: Option<Vec<String>>,
+    },
+
+    /// Search archived sessions
+    Search {
+        /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
+        query: String,
+        /// Maximum number of results (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: u32,
+        /// Show full exchange for result N
+        #[arg(long)]
+        expand: Option<usize>,
+    },
+
+    /// List all archives for the current project
+    ListArchives,
+
+    /// Delete an archive and all its indexed content
+    DeleteArchive {
+        /// Archive name to delete
+        name: String,
+    },
+
+    /// Browse a full archived conversation
+    ShowArchive {
+        /// Archive name to browse
+        name: String,
+        /// Jump to a specific exchange
+        #[arg(long)]
+        exchange: Option<i32>,
+    },
 }
 
 /// Main CLI dispatch. Called from main.rs.
@@ -158,6 +204,53 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Commands::DetectLinks { force } => {
             cmd_detect_links(&source, &store, force)?;
+        }
+        Commands::Archive { index, name, tags } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_archive(
+                &source,
+                &store,
+                &archive_store,
+                index,
+                name,
+                tags,
+                &directory,
+            )?;
+        }
+        Commands::Search {
+            query,
+            limit,
+            expand,
+        } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_search(&archive_store, &query, limit, expand, &directory)?;
+        }
+        Commands::ListArchives => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_list_archives(&archive_store, &directory)?;
+        }
+        Commands::DeleteArchive { name } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_delete_archive(&archive_store, &name, &directory)?;
+        }
+        Commands::ShowArchive { name, exchange } => {
+            let archive_store =
+                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
+            let directory = std::env::current_dir().context("Failed to get current directory")?;
+            let directory = directory.to_string_lossy();
+            cmd_show_archive(&archive_store, &name, exchange, &directory)?;
         }
     }
 
@@ -729,6 +822,192 @@ fn cmd_detect_links(
         } else {
             println!("Skipped.\n");
         }
+    }
+
+    Ok(())
+}
+
+/// Archive a session.
+fn cmd_archive(
+    source: &dyn SessionSource,
+    store: &dyn MetadataStore,
+    archive_store: &dyn ArchiveStore,
+    index: usize,
+    name_flag: Option<String>,
+    tags_flag: Option<Vec<String>>,
+    directory: &str,
+) -> Result<()> {
+    let list_result = sessions::list_sessions(source, store)?;
+    sessions::validate_index(index, list_result.all_sessions.len())?;
+    let session = &list_result.all_sessions[index];
+
+    println!(
+        "Archiving session [{}] \"{}\" ({} messages)",
+        index, session.preview, session.msg_count
+    );
+
+    // Resolve name
+    let name = if let Some(name) = name_flag {
+        name
+    } else {
+        let meta = list_result.metadata.get(&session.id);
+        let existing_name = meta.and_then(|m| m.name.as_deref()).unwrap_or("");
+        print!("Name [{}]: ", existing_name);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            if existing_name.is_empty() {
+                anyhow::bail!("Archive name is required.");
+            }
+            existing_name.to_string()
+        } else {
+            input.to_string()
+        }
+    };
+
+    // Resolve tags
+    let tags = if let Some(tags) = tags_flag {
+        tags
+    } else {
+        let meta = list_result.metadata.get(&session.id);
+        let existing_tags: Vec<String> = meta
+            .map(|m| {
+                let mut tags: Vec<String> = m.tags.iter().cloned().collect();
+                tags.sort();
+                tags
+            })
+            .unwrap_or_default();
+        let existing_display = existing_tags.join(", ");
+        print!("Tags [{}]: ", existing_display);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            existing_tags
+        } else {
+            input.split_whitespace().map(|s| s.to_string()).collect()
+        }
+    };
+
+    let result = archive::archive_session(
+        &session.id,
+        &name,
+        tags,
+        session.created_at,
+        directory,
+        source,
+        archive_store,
+    )?;
+
+    print!(
+        "Archived as '{}' ({} exchanges, {} messages)",
+        result.archive_name, result.chunk_count, result.message_count
+    );
+    if result.pruned {
+        print!(" [pruned]");
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Search archives.
+fn cmd_search(
+    archive_store: &dyn ArchiveStore,
+    query: &str,
+    limit: u32,
+    expand: Option<usize>,
+    directory: &str,
+) -> Result<()> {
+    let results = archive::search_archives(query, limit, directory, archive_store)?;
+
+    if let Some(n) = expand {
+        if n >= results.len() {
+            anyhow::bail!(
+                "Result index {} out of range (0 to {}).",
+                n,
+                results.len().saturating_sub(1)
+            );
+        }
+        let chunk = archive::get_expanded_result(
+            &results[n].archive_name,
+            results[n].exchange_index,
+            directory,
+            archive_store,
+        )?;
+        display::print_expanded_exchange(&chunk, &results[n].archive_name);
+    } else {
+        display::print_search_results(&results);
+    }
+
+    Ok(())
+}
+
+/// List archives.
+fn cmd_list_archives(archive_store: &dyn ArchiveStore, directory: &str) -> Result<()> {
+    let archives = archive::list_archives(directory, archive_store)?;
+    display::print_archive_list(&archives);
+    Ok(())
+}
+
+/// Delete an archive.
+fn cmd_delete_archive(archive_store: &dyn ArchiveStore, name: &str, directory: &str) -> Result<()> {
+    let archive_info = archive::get_archive_info(name, directory, archive_store)?;
+
+    print!(
+        "Delete archive '{}' ({} messages)? [y/N] ",
+        name, archive_info.message_count
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    if input.trim() != "y" && input.trim() != "Y" {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    let result = archive::delete_archive(name, directory, archive_store)?;
+    println!(
+        "Deleted archive '{}' ({} messages)",
+        result.archive_name, result.message_count
+    );
+
+    Ok(())
+}
+
+/// Show a full archived conversation.
+fn cmd_show_archive(
+    archive_store: &dyn ArchiveStore,
+    name: &str,
+    exchange: Option<i32>,
+    directory: &str,
+) -> Result<()> {
+    let result = archive::show_archive(name, directory, archive_store)?;
+
+    if result.chunks.is_empty() {
+        return Err(KsmError::InvalidInput(format!("Archive '{}' has no content.", name)).into());
+    }
+
+    if let Some(n) = exchange {
+        let chunk = result
+            .chunks
+            .iter()
+            .find(|c| c.exchange_index == n)
+            .ok_or_else(|| {
+                KsmError::InvalidInput(format!(
+                    "Exchange {} not found. Archive has {} exchanges (0 to {}).",
+                    n,
+                    result.chunks.len(),
+                    result.chunks.len() - 1
+                ))
+            })?;
+        display::print_single_exchange(&result.archive, chunk);
+    } else {
+        display::print_full_archive(&result.archive, &result.chunks);
     }
 
     Ok(())
