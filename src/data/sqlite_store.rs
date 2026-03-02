@@ -13,9 +13,6 @@ use crate::data::MetadataStore;
 use crate::error::{KsmError, Result};
 use crate::models::SessionMetadata;
 
-/// Current schema version. Phase 0b = version 1.
-const SCHEMA_VERSION: i64 = 1;
-
 /// Metadata store backed by SQLite (ksm.db).
 pub struct SqliteMetadataStore {
     path: PathBuf,
@@ -68,29 +65,22 @@ impl SqliteMetadataStore {
     fn ensure_schema(&self) -> Result<()> {
         let conn = self.open()?;
 
-        // Check if schema_version table exists
         let table_exists: bool = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")?
             .exists([])?;
 
         if !table_exists {
-            // New database - create all tables
             Self::create_v1_schema(&conn)?;
+            Self::migrate_v1_to_v2(&conn)?;
         } else {
-            // Check version and migrate if needed
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
                 .query_row([], |row| row.get(0))?;
 
-            if version < SCHEMA_VERSION {
-                return Err(KsmError::Storage {
-                    message: format!(
-                        "Database schema version {} is older than required version {}. Migration not implemented yet.",
-                        version, SCHEMA_VERSION
-                    ),
-                    path: Some(self.path.clone()),
-                });
+            if version == 1 {
+                Self::migrate_v1_to_v2(&conn)?;
             }
+            // version == 2: nothing to do (current)
         }
 
         Ok(())
@@ -122,6 +112,63 @@ impl SqliteMetadataStore {
         )?;
 
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Migrate from schema version 1 to version 2 (add archive tables).
+    fn migrate_v1_to_v2(connection: &Connection) -> Result<()> {
+        let tx = connection.unchecked_transaction()?;
+
+        tx.execute_batch(
+            "CREATE TABLE archives (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                message_count INTEGER NOT NULL,
+                session_created_at INTEGER NOT NULL,
+                archived_at INTEGER NOT NULL,
+                tags TEXT,
+                pruned BOOLEAN NOT NULL DEFAULT FALSE
+            );
+
+            CREATE INDEX idx_archives_directory ON archives(directory);
+            CREATE INDEX idx_archives_name ON archives(name);
+
+            CREATE TABLE chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                archive_id INTEGER NOT NULL REFERENCES archives(id) ON DELETE CASCADE,
+                exchange_index INTEGER NOT NULL,
+                user_content TEXT NOT NULL,
+                assistant_content TEXT NOT NULL,
+                tool_summary TEXT,
+                UNIQUE(archive_id, exchange_index)
+            );
+
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                user_content,
+                assistant_content,
+                tool_summary,
+                content='chunks',
+                content_rowid='id',
+                tokenize='porter unicode61'
+            );
+
+            CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+                INSERT INTO chunks_fts(rowid, user_content, assistant_content, tool_summary)
+                VALUES (new.id, new.user_content, new.assistant_content, new.tool_summary);
+            END;
+
+            CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+                INSERT INTO chunks_fts(chunks_fts, rowid, user_content, assistant_content, tool_summary)
+                VALUES ('delete', old.id, old.user_content, old.assistant_content, old.tool_summary);
+            END;
+
+            UPDATE schema_version SET version = 2;",
+        )?;
+
+        tx.commit()?;
+        debug!("Migrated schema from version 1 to version 2 (archive tables)");
         Ok(())
     }
 

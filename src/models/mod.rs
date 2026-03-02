@@ -1,7 +1,12 @@
+mod archive;
 mod conversation;
 mod metadata;
 mod session;
 
+pub use archive::{
+    Archive, ArchiveResult, Chunk, DeleteArchiveResult, NewArchive, NewChunk, SearchQuery,
+    SearchResult, ShowArchiveResult,
+};
 pub use conversation::{
     AssistantContent, CancelledToolUsesContent, ConversationData, HistoryEntry, PromptContent,
     RequestMetadata, ResponseContent, ToolCall, ToolResult, ToolResultContent, ToolResultStatus,

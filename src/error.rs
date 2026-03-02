@@ -39,6 +39,18 @@ pub enum KsmError {
     #[error("No sessions found")]
     NoSessions,
 
+    #[error("Archive not found: {0}")]
+    ArchiveNotFound(String),
+
+    #[error("Session already archived as '{0}'")]
+    AlreadyArchived(String),
+
+    #[error("Search error: {0}")]
+    SearchError(String),
+
+    #[error("Schema version mismatch: expected {expected}, found {found}")]
+    SchemaVersionMismatch { expected: i64, found: i64 },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
