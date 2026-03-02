@@ -78,6 +78,96 @@ auto_clean = true
     Ok(config)
 }
 
+/// Resolve the path to `metadata.json` based on storage configuration.
+///
+/// Follows the same storage mode logic:
+/// - global: `~/.ksm/metadata.json`
+/// - local: `.kiro/ksm-metadata.json`
+/// - custom: `{custom_path}` (the path itself)
+///
+/// Shared by `JsonMetadataStore` and `SqliteMetadataStore::migrate_from_json`.
+pub fn metadata_path() -> Result<PathBuf> {
+    let config = load_config()?;
+
+    match config.metadata_storage.as_str() {
+        "global" => {
+            let home = std::env::var("HOME")
+                .map_err(|_| KsmError::Config("HOME environment variable not set".to_string()))?;
+            let ksm_dir = PathBuf::from(home).join(".ksm");
+            fs::create_dir_all(&ksm_dir)?;
+            Ok(ksm_dir.join("metadata.json"))
+        }
+        "local" => {
+            let cwd = std::env::current_dir()?;
+            let kiro_dir = cwd.join(".kiro");
+            fs::create_dir_all(&kiro_dir)?;
+            Ok(kiro_dir.join("ksm-metadata.json"))
+        }
+        "custom" => {
+            let custom = config.custom_path.ok_or_else(|| {
+                KsmError::Config(
+                    "custom_path not set in config when metadata_storage is 'custom'".to_string(),
+                )
+            })?;
+            let path = PathBuf::from(custom);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            Ok(path)
+        }
+        other => Err(KsmError::Config(format!(
+            "Invalid metadata_storage option: {}",
+            other
+        ))),
+    }
+}
+
+/// Resolve the path to `ksm.db` based on storage configuration.
+///
+/// Follows the same storage mode logic as metadata:
+/// - global: `~/.ksm/ksm.db`
+/// - local: `.kiro/ksm.db`
+/// - custom: `{custom_path_parent}/ksm.db`
+pub fn ksm_db_path() -> Result<PathBuf> {
+    let config = load_config()?;
+
+    match config.metadata_storage.as_str() {
+        "global" => {
+            let home = std::env::var("HOME")
+                .map_err(|_| KsmError::Config("HOME environment variable not set".to_string()))?;
+            let ksm_dir = PathBuf::from(home).join(".ksm");
+            fs::create_dir_all(&ksm_dir)?;
+            Ok(ksm_dir.join("ksm.db"))
+        }
+        "local" => {
+            let cwd = std::env::current_dir()?;
+            let kiro_dir = cwd.join(".kiro");
+            fs::create_dir_all(&kiro_dir)?;
+            Ok(kiro_dir.join("ksm.db"))
+        }
+        "custom" => {
+            let custom = config.custom_path.ok_or_else(|| {
+                KsmError::Config(
+                    "custom_path not set in config when metadata_storage is 'custom'".to_string(),
+                )
+            })?;
+            let path = PathBuf::from(custom);
+            let parent = path.parent().ok_or_else(|| {
+                KsmError::Config(format!(
+                    "Cannot determine parent directory for custom path: {}",
+                    path.display()
+                ))
+            })?;
+            fs::create_dir_all(parent)?;
+            Ok(parent.join("ksm.db"))
+        }
+        other => Err(KsmError::Config(format!(
+            "Invalid metadata_storage option: {}",
+            other
+        ))),
+    }
+}
+
 /// Loads configuration from `~/.ksm/config.toml`.
 ///
 /// Creates default config if file doesn't exist.

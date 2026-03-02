@@ -1,10 +1,12 @@
 mod database;
 mod json_store;
 mod kiro_cli;
+mod sqlite_store;
 
 pub use database::DatabaseSource;
 pub use json_store::JsonMetadataStore;
 pub use kiro_cli::KiroCliSource;
+pub use sqlite_store::SqliteMetadataStore;
 
 use std::collections::HashMap;
 
