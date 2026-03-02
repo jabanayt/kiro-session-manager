@@ -178,7 +178,7 @@ pub fn format_search_result(result: &SearchResult, index: usize) -> String {
         .replace("<<<", highlight_off);
 
     let mut output = format!(
-        "\x1b[90m──────────────────────────────────────── [{}] ────\x1b[0m\n{} -- exchange #{}\n    \x1b[32mUser:\x1b[0m {}\n    ----\n    {}",
+        "\x1b[90m──────────────────────────────────────── [{}] ────\x1b[0m\n{} -- exchange #{}\n    \x1b[32mUser:\x1b[0m {}\n    \x1b[34mAssistant:\x1b[0m {}",
         index, result.archive_name, result.exchange_index, user_snippet, assistant_snippet
     );
 
