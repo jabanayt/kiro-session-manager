@@ -290,27 +290,16 @@ fn extract_chunks(conversation: &ConversationData) -> Vec<NewChunk> {
 /// Detect if a conversation contains pruning markers.
 fn is_pruned(conversation: &ConversationData) -> bool {
     for entry in &conversation.history {
-        // Check tool result content for pruning markers
         if let Some(user_msg) = &entry.user
             && let Some(UserContent::ToolUseResults(results)) = &user_msg.content
         {
             for result in &results.tool_use_results {
                 for content in &result.content {
                     if let ToolResultContent::Text(text) = content
-                        && (text.contains("[Pruned]") || text.contains("[pruned]"))
+                        && (text == "[Pruned]" || text == "[pruned]")
                     {
                         return true;
                     }
-                }
-            }
-        }
-
-        // Check tool call args for pruning markers
-        if let Some(AssistantContent::ToolUse(t)) = &entry.assistant {
-            for tool_call in &t.tool_uses {
-                let args_str = tool_call.args.to_string();
-                if args_str.contains("[Pruned]") || args_str.contains("[pruned]") {
-                    return true;
                 }
             }
         }
