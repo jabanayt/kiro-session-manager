@@ -15,6 +15,7 @@ use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 #[derive(Parser)]
 #[command(name = "ksm")]
+#[command(version)]
 #[command(about = "Kiro Session Manager - manage kiro-cli chat sessions")]
 pub struct Cli {
     #[command(subcommand)]
