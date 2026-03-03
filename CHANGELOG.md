@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-03-03
+
+### Added
+
+- Auto-pager for search results and show-archive using less
+- no-pager flag to bypass pager on search and show-archive
+
+### Changed
+
+- Search --limit default raised from 10 to 50
+
+### Fixed
+
+- Documented --limit flag on ksm search in USAGE.md (default: 10)
+- Documented FTS5 query syntax with shell quoting examples and Porter stemming behaviour in USAGE.md
+- Indented multi-line content in search results, show-archive, and expanded exchange display
+- Changed archive tag prompt display from comma-separated to space-separated to match input format
+- Sanitised session preview to single line by collapsing whitespace and newlines
+- Added --version flag to CLI using clap version attribute
+- Expanded installation guide with GLIBC mismatch note, rustup install instructions, and source tarball alternative
+
 ## [0.2.2] - 2026-03-02
 
 ### Added

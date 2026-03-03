@@ -177,14 +177,22 @@ pub struct RequestMetadata {
 impl ConversationData {
     /// Extract preview text from conversation data.
     ///
-    /// Returns first user prompt (truncated to 100 chars), "[Compacted session]",
-    /// or "[No preview available]".
+    /// Returns first user prompt (single line, truncated to 100 chars),
+    /// "[Compacted session]", or "[No preview available]".
     pub fn preview(&self) -> String {
         if let Some(first_entry) = self.history.first()
             && let Some(user_msg) = &first_entry.user
             && let Some(UserContent::Prompt(prompt)) = &user_msg.content
         {
-            return prompt.prompt.chars().take(100).collect();
+            let sanitised: String = prompt
+                .prompt
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(100)
+                .collect();
+            return sanitised;
         }
 
         if self.history.is_empty() && self.latest_summary.is_some() {

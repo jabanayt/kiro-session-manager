@@ -18,13 +18,31 @@ tar xzf ksm-linux-<arch>.tar.gz
 ./ksm list
 ```
 
+If the binary fails with a GLIBC version error, your system's C library is older than the build target. Use Option 2 to compile from source instead.
+
 ## Option 2: Build from Source
 
-Requires Rust 1.70+.
+Requires Rust 1.70+. If Rust is not installed, install it with [rustup](https://rustup.rs/):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+```
+
+Then restart your shell, or run `source ~/.cargo/env` to load Rust into the current session.
+
+Clone the repository and build:
 
 ```bash
 git clone https://github.com/jabanayt/kiro-session-manager.git
 cd kiro-session-manager
+cargo build --release
+```
+
+Alternatively, download a source tarball from the [Releases page](https://github.com/jabanayt/kiro-session-manager/releases) if git is not available:
+
+```bash
+tar xzf kiro-session-manager-<version>.tar.gz
+cd kiro-session-manager-<version>
 cargo build --release
 ```
 

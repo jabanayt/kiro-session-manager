@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 
 use crate::cli::display;
+use crate::cli::pager;
 use crate::data::{
     ArchiveStore, HybridSource, MetadataStore, SessionSource, SqliteArchiveStore,
     SqliteMetadataStore,
@@ -14,6 +15,7 @@ use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 #[derive(Parser)]
 #[command(name = "ksm")]
+#[command(version)]
 #[command(about = "Kiro Session Manager - manage kiro-cli chat sessions")]
 pub struct Cli {
     #[command(subcommand)]
@@ -103,12 +105,15 @@ pub enum Commands {
     Search {
         /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
         query: String,
-        /// Maximum number of results (default: 10)
-        #[arg(long, default_value = "10")]
+        /// Maximum number of results (default: 50)
+        #[arg(long, default_value = "50")]
         limit: u32,
         /// Show full exchange for result N
         #[arg(long)]
         expand: Option<usize>,
+        /// Disable pager (print directly to stdout)
+        #[arg(long)]
+        no_pager: bool,
     },
 
     /// List all archives for the current project
@@ -127,6 +132,9 @@ pub enum Commands {
         /// Jump to a specific exchange
         #[arg(long)]
         exchange: Option<i32>,
+        /// Disable pager (print directly to stdout)
+        #[arg(long)]
+        no_pager: bool,
     },
 }
 
@@ -224,12 +232,13 @@ pub fn run(cli: Cli) -> Result<()> {
             query,
             limit,
             expand,
+            no_pager,
         } => {
             let archive_store =
                 SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
             let directory = std::env::current_dir().context("Failed to get current directory")?;
             let directory = directory.to_string_lossy();
-            cmd_search(&archive_store, &query, limit, expand, &directory)?;
+            cmd_search(&archive_store, &query, limit, expand, no_pager, &directory)?;
         }
         Commands::ListArchives => {
             let archive_store =
@@ -245,12 +254,12 @@ pub fn run(cli: Cli) -> Result<()> {
             let directory = directory.to_string_lossy();
             cmd_delete_archive(&archive_store, &name, &directory)?;
         }
-        Commands::ShowArchive { name, exchange } => {
+        Commands::ShowArchive { name, exchange, no_pager } => {
             let archive_store =
                 SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
             let directory = std::env::current_dir().context("Failed to get current directory")?;
             let directory = directory.to_string_lossy();
-            cmd_show_archive(&archive_store, &name, exchange, &directory)?;
+            cmd_show_archive(&archive_store, &name, exchange, no_pager, &directory)?;
         }
     }
 
@@ -879,7 +888,7 @@ fn cmd_archive(
                 tags
             })
             .unwrap_or_default();
-        let existing_display = existing_tags.join(", ");
+        let existing_display = existing_tags.join(" ");
         print!("Tags [{}]: ", existing_display);
         io::stdout().flush()?;
         let mut input = String::new();
@@ -920,11 +929,12 @@ fn cmd_search(
     query: &str,
     limit: u32,
     expand: Option<usize>,
+    no_pager: bool,
     directory: &str,
 ) -> Result<()> {
     let results = archive::search_archives(query, limit, directory, archive_store)?;
 
-    if let Some(n) = expand {
+    let output = if let Some(n) = expand {
         if n >= results.len() {
             anyhow::bail!(
                 "Result index {} out of range (0 to {}).",
@@ -938,9 +948,15 @@ fn cmd_search(
             directory,
             archive_store,
         )?;
-        display::print_expanded_exchange(&chunk, &results[n].archive_name);
+        display::format_expanded_exchange(&chunk, &results[n].archive_name)
     } else {
-        display::print_search_results(&results);
+        display::format_search_results(&results)
+    };
+
+    if no_pager {
+        print!("{}", output);
+    } else {
+        pager::paged_output(&output)?;
     }
 
     Ok(())
@@ -984,6 +1000,7 @@ fn cmd_show_archive(
     archive_store: &dyn ArchiveStore,
     name: &str,
     exchange: Option<i32>,
+    no_pager: bool,
     directory: &str,
 ) -> Result<()> {
     let result = archive::show_archive(name, directory, archive_store)?;
@@ -992,7 +1009,7 @@ fn cmd_show_archive(
         return Err(KsmError::InvalidInput(format!("Archive '{}' has no content.", name)).into());
     }
 
-    if let Some(n) = exchange {
+    let output = if let Some(n) = exchange {
         let chunk = result
             .chunks
             .iter()
@@ -1005,9 +1022,15 @@ fn cmd_show_archive(
                     result.chunks.len() - 1
                 ))
             })?;
-        display::print_single_exchange(&result.archive, chunk);
+        display::format_single_exchange(&result.archive, chunk)
     } else {
-        display::print_full_archive(&result.archive, &result.chunks);
+        display::format_full_archive(&result.archive, &result.chunks)
+    };
+
+    if no_pager {
+        print!("{}", output);
+    } else {
+        pager::paged_output(&output)?;
     }
 
     Ok(())

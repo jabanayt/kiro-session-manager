@@ -281,15 +281,49 @@ Archives store the full conversation broken into searchable exchanges.
 ksm search "query terms"
 ```
 
-Searches across all archives in the current project directory.
-Matched terms are highlighted in results.
-Supports FTS5 query syntax: `"exact phrase"`, `term1 AND term2`, `term1 OR term2`, `term1 NOT term2`.
+Searches across all archives in the current project directory. Matched terms are highlighted in results.
 
-To view the full exchange for a search result:
+#### Search Options
+
+- `--limit N` -- Maximum number of results to return (default: 50)
+- `--expand N` -- Show the full exchange for result N
+- `--no-pager` -- Disable pager (print directly to stdout)
 
 ```bash
+# Limit to 5 results
+ksm search "query" --limit 5
+
+# View full exchange for result 0
 ksm search "query" --expand 0
 ```
+
+Long output is automatically piped through a pager when it exceeds the terminal height. Use `--no-pager` to disable.
+
+#### FTS5 Query Syntax
+
+Search uses SQLite FTS5 full-text search. Multi-word queries require shell quotes.
+
+```bash
+# Single word (no quotes needed)
+ksm search prune
+
+# AND -- results must contain both terms
+ksm search "prune AND architecture"
+
+# OR -- results contain either term
+ksm search "prune OR architecture"
+
+# NOT -- exclude a term
+ksm search "prune NOT architecture"
+
+# Prefix -- wildcard matching
+ksm search "arch*"
+
+# Exact phrase -- wrap in single quotes around double quotes
+ksm search '"context pruning"'
+```
+
+Note: Search uses Porter stemming, which means words are reduced to their root form. For example, "prune", "pruning", and "pruned" are all treated as the same term. This means `prune NOT pruning` will return no results because both words share the same stem.
 
 ### List Archives
 
@@ -307,6 +341,9 @@ ksm show-archive "Project Planning"
 
 # Single exchange in full
 ksm show-archive "Project Planning" --exchange 3
+
+# Disable pager
+ksm show-archive "Project Planning" --no-pager
 ```
 
 ### Delete an Archive
