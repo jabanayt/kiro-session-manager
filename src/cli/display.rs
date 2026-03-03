@@ -52,6 +52,15 @@ pub fn format_msg_count(count: u32) -> String {
     }
 }
 
+/// Indent every line of `text` by `spaces` spaces.
+fn indent_content(text: &str, spaces: usize) -> String {
+    let pad = " ".repeat(spaces);
+    text.lines()
+        .map(|line| format!("{}{}", pad, line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Format a session's display line (tags + name/preview + parent indicator).
 ///
 /// Logic from current commands/list.rs lines 24-72.
@@ -171,11 +180,13 @@ pub fn format_search_result(result: &SearchResult, index: usize) -> String {
     let user_snippet = result
         .user_snippet
         .replace(">>>", highlight_on)
-        .replace("<<<", highlight_off);
+        .replace("<<<", highlight_off)
+        .replace('\n', "\n    ");
     let assistant_snippet = result
         .assistant_snippet
         .replace(">>>", highlight_on)
-        .replace("<<<", highlight_off);
+        .replace("<<<", highlight_off)
+        .replace('\n', "\n    ");
 
     let mut output = format!(
         "\x1b[90m──────────────────────────────────────── [{}] ────\x1b[0m\n{} -- exchange #{}\n    \x1b[32mUser:\x1b[0m {}\n    \x1b[34mAssistant:\x1b[0m {}",
@@ -185,7 +196,8 @@ pub fn format_search_result(result: &SearchResult, index: usize) -> String {
     if let Some(tool_snippet) = &result.tool_snippet {
         let tool_highlighted = tool_snippet
             .replace(">>>", highlight_on)
-            .replace("<<<", highlight_off);
+            .replace("<<<", highlight_off)
+            .replace('\n', "\n    ");
         output.push_str(&format!("\n    \x1b[33mTools:\x1b[0m {}", tool_highlighted));
     }
 
@@ -215,15 +227,15 @@ pub fn print_expanded_exchange(chunk: &Chunk, archive_name: &str) {
     );
     println!();
     println!("\x1b[32mUser:\x1b[0m");
-    println!("{}", chunk.user_content);
+    println!("{}", indent_content(&chunk.user_content, 4));
     println!();
     println!("\x1b[34mAssistant:\x1b[0m");
-    println!("{}", chunk.assistant_content);
+    println!("{}", indent_content(&chunk.assistant_content, 4));
 
     if let Some(tool_summary) = &chunk.tool_summary {
         println!();
         println!("\x1b[33mTools:\x1b[0m");
-        println!("{}", tool_summary);
+        println!("{}", indent_content(tool_summary, 4));
     }
 
     println!();
@@ -296,14 +308,14 @@ pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
         );
         println!();
         println!("\x1b[32mUser:\x1b[0m");
-        println!("{}", chunk.user_content);
+        println!("{}", indent_content(&chunk.user_content, 4));
         println!();
         println!("\x1b[34mAssistant:\x1b[0m");
 
         let lines: Vec<&str> = chunk.assistant_content.lines().collect();
         if lines.len() > max_lines {
             for line in &lines[..max_lines] {
-                println!("{}", line);
+                println!("    {}", line);
             }
             println!(
                 "\x1b[90m    ... ({} more lines, use --exchange {} to view)\x1b[0m",
@@ -311,13 +323,13 @@ pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
                 chunk.exchange_index
             );
         } else {
-            println!("{}", chunk.assistant_content);
+            println!("{}", indent_content(&chunk.assistant_content, 4));
         }
 
         if let Some(tool_summary) = &chunk.tool_summary {
             println!();
             println!("\x1b[33mTools:\x1b[0m");
-            println!("{}", tool_summary);
+            println!("{}", indent_content(tool_summary, 4));
         }
 
         println!();
@@ -336,15 +348,15 @@ pub fn print_single_exchange(archive: &Archive, chunk: &Chunk) {
     );
     println!();
     println!("\x1b[32mUser:\x1b[0m");
-    println!("{}", chunk.user_content);
+    println!("{}", indent_content(&chunk.user_content, 4));
     println!();
     println!("\x1b[34mAssistant:\x1b[0m");
-    println!("{}", chunk.assistant_content);
+    println!("{}", indent_content(&chunk.assistant_content, 4));
 
     if let Some(tool_summary) = &chunk.tool_summary {
         println!();
         println!("\x1b[33mTools:\x1b[0m");
-        println!("{}", tool_summary);
+        println!("{}", indent_content(tool_summary, 4));
     }
 
     println!();
