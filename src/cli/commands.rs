@@ -879,7 +879,7 @@ fn cmd_archive(
                 tags
             })
             .unwrap_or_default();
-        let existing_display = existing_tags.join(", ");
+        let existing_display = existing_tags.join(" ");
         print!("Tags [{}]: ", existing_display);
         io::stdout().flush()?;
         let mut input = String::new();
