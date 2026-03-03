@@ -1,7 +1,7 @@
 # Kiro Session Manager (ksm)
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20GPL--3.0-blue)](LICENSE-APACHE)
-[![Release](https://img.shields.io/github/v/release/jabanayt/kiro-session-manager)](https://github.com/jabanayt/kiro-session-manager/releases)
+[![Release](https://img.shields.io/github/v/release/jabanayt/kiro-session-manager?include_prereleases)](https://github.com/jabanayt/kiro-session-manager/releases)
 
 A lightweight CLI tool to manage kiro-cli chat sessions efficiently.
 
