@@ -285,8 +285,9 @@ Searches across all archives in the current project directory. Matched terms are
 
 #### Search Options
 
-- `--limit N` -- Maximum number of results to return (default: 10)
+- `--limit N` -- Maximum number of results to return (default: 50)
 - `--expand N` -- Show the full exchange for result N
+- `--no-pager` -- Disable pager (print directly to stdout)
 
 ```bash
 # Limit to 5 results
@@ -295,6 +296,8 @@ ksm search "query" --limit 5
 # View full exchange for result 0
 ksm search "query" --expand 0
 ```
+
+Long output is automatically piped through a pager when it exceeds the terminal height. Use `--no-pager` to disable.
 
 #### FTS5 Query Syntax
 
@@ -338,6 +341,9 @@ ksm show-archive "Project Planning"
 
 # Single exchange in full
 ksm show-archive "Project Planning" --exchange 3
+
+# Disable pager
+ksm show-archive "Project Planning" --no-pager
 ```
 
 ### Delete an Archive

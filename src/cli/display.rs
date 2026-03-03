@@ -204,41 +204,36 @@ pub fn format_search_result(result: &SearchResult, index: usize) -> String {
     output
 }
 
-/// Print search results list.
-pub fn print_search_results(results: &[SearchResult]) {
+/// Format search results as a single string (for pager).
+pub fn format_search_results(results: &[SearchResult]) -> String {
     if results.is_empty() {
-        println!("No results found.");
-        return;
+        return "No results found.\n".to_string();
     }
 
+    let mut output = String::new();
     for (i, result) in results.iter().enumerate() {
-        println!("{}", format_search_result(result, i));
-        println!();
+        output.push_str(&format_search_result(result, i));
+        output.push_str("\n\n");
     }
-
-    println!("Use --expand N to show the full exchange for result N.");
+    output.push_str("Use --expand N to show the full exchange for result N.\n");
+    output
 }
 
-/// Format an expanded exchange (full content, not snippet).
-pub fn print_expanded_exchange(chunk: &Chunk, archive_name: &str) {
-    println!(
-        "\x1b[90m──── \x1b[0m{} -- exchange #{}\x1b[90m ────\x1b[0m",
+/// Format an expanded exchange as a string (for pager).
+pub fn format_expanded_exchange(chunk: &Chunk, archive_name: &str) -> String {
+    let mut output = format!(
+        "\x1b[90m──── \x1b[0m{} -- exchange #{}\x1b[90m ────\x1b[0m\n",
         archive_name, chunk.exchange_index
     );
-    println!();
-    println!("\x1b[32mUser:\x1b[0m");
-    println!("{}", indent_content(&chunk.user_content, 4));
-    println!();
-    println!("\x1b[34mAssistant:\x1b[0m");
-    println!("{}", indent_content(&chunk.assistant_content, 4));
+    output.push_str(&format!("\n\x1b[32mUser:\x1b[0m\n{}\n", indent_content(&chunk.user_content, 4)));
+    output.push_str(&format!("\n\x1b[34mAssistant:\x1b[0m\n{}\n", indent_content(&chunk.assistant_content, 4)));
 
     if let Some(tool_summary) = &chunk.tool_summary {
-        println!();
-        println!("\x1b[33mTools:\x1b[0m");
-        println!("{}", indent_content(tool_summary, 4));
+        output.push_str(&format!("\n\x1b[33mTools:\x1b[0m\n{}\n", indent_content(tool_summary, 4)));
     }
 
-    println!();
+    output.push('\n');
+    output
 }
 
 /// Format an archive for the list-archives display.
@@ -277,87 +272,80 @@ pub fn print_archive_list(archives: &[Archive]) {
     }
 }
 
-/// Print a full archived conversation (show-archive).
-pub fn print_full_archive(archive: &Archive, chunks: &[Chunk]) {
+/// Format a full archived conversation as a string (for pager).
+pub fn format_full_archive(archive: &Archive, chunks: &[Chunk]) -> String {
     let session_date = format_time_ago(archive.session_created_at);
     let archived_date = format_time_ago(archive.archived_at);
     let msg_count = format_msg_count(archive.message_count);
 
-    println!(
-        "\n\x1b[1m{}\x1b[0m | {} | session {} | archived {}",
+    let mut output = format!(
+        "\n\x1b[1m{}\x1b[0m | {} | session {} | archived {}\n",
         archive.name, msg_count, session_date, archived_date
     );
 
     if archive.pruned {
-        println!("\x1b[33m[pruned]\x1b[0m");
+        output.push_str("\x1b[33m[pruned]\x1b[0m\n");
     }
 
     if !archive.tags.is_empty() {
         let tags: Vec<&str> = archive.tags.iter().map(|s| s.as_str()).collect();
-        println!("Tags: {}", tags.join(", "));
+        output.push_str(&format!("Tags: {}\n", tags.join(", ")));
     }
 
-    println!();
+    output.push('\n');
 
     let max_lines = 10;
 
     for chunk in chunks {
-        println!(
-            "\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m",
+        output.push_str(&format!(
+            "\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m\n",
             chunk.exchange_index
-        );
-        println!();
-        println!("\x1b[32mUser:\x1b[0m");
-        println!("{}", indent_content(&chunk.user_content, 4));
-        println!();
-        println!("\x1b[34mAssistant:\x1b[0m");
+        ));
+        output.push_str(&format!("\n\x1b[32mUser:\x1b[0m\n{}\n", indent_content(&chunk.user_content, 4)));
+        output.push_str("\n\x1b[34mAssistant:\x1b[0m\n");
 
         let lines: Vec<&str> = chunk.assistant_content.lines().collect();
         if lines.len() > max_lines {
             for line in &lines[..max_lines] {
-                println!("    {}", line);
+                output.push_str(&format!("    {}\n", line));
             }
-            println!(
-                "\x1b[90m    ... ({} more lines, use --exchange {} to view)\x1b[0m",
+            output.push_str(&format!(
+                "\x1b[90m    ... ({} more lines, use --exchange {} to view)\x1b[0m\n",
                 lines.len() - max_lines,
                 chunk.exchange_index
-            );
+            ));
         } else {
-            println!("{}", indent_content(&chunk.assistant_content, 4));
+            output.push_str(&indent_content(&chunk.assistant_content, 4));
+            output.push('\n');
         }
 
         if let Some(tool_summary) = &chunk.tool_summary {
-            println!();
-            println!("\x1b[33mTools:\x1b[0m");
-            println!("{}", indent_content(tool_summary, 4));
+            output.push_str(&format!("\n\x1b[33mTools:\x1b[0m\n{}\n", indent_content(tool_summary, 4)));
         }
 
-        println!();
+        output.push('\n');
     }
+
+    output
 }
 
-/// Print a single exchange from show-archive --exchange N.
-pub fn print_single_exchange(archive: &Archive, chunk: &Chunk) {
-    println!(
-        "\n\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m",
+/// Format a single exchange as a string (for pager).
+pub fn format_single_exchange(archive: &Archive, chunk: &Chunk) -> String {
+    let mut output = format!(
+        "\n\x1b[90m────────────────────────────────────── [{}] ────\x1b[0m\n",
         chunk.exchange_index
     );
-    println!(
-        "\x1b[1m{}\x1b[0m -- exchange #{}",
+    output.push_str(&format!(
+        "\x1b[1m{}\x1b[0m -- exchange #{}\n",
         archive.name, chunk.exchange_index
-    );
-    println!();
-    println!("\x1b[32mUser:\x1b[0m");
-    println!("{}", indent_content(&chunk.user_content, 4));
-    println!();
-    println!("\x1b[34mAssistant:\x1b[0m");
-    println!("{}", indent_content(&chunk.assistant_content, 4));
+    ));
+    output.push_str(&format!("\n\x1b[32mUser:\x1b[0m\n{}\n", indent_content(&chunk.user_content, 4)));
+    output.push_str(&format!("\n\x1b[34mAssistant:\x1b[0m\n{}\n", indent_content(&chunk.assistant_content, 4)));
 
     if let Some(tool_summary) = &chunk.tool_summary {
-        println!();
-        println!("\x1b[33mTools:\x1b[0m");
-        println!("{}", indent_content(tool_summary, 4));
+        output.push_str(&format!("\n\x1b[33mTools:\x1b[0m\n{}\n", indent_content(tool_summary, 4)));
     }
 
-    println!();
+    output.push('\n');
+    output
 }
