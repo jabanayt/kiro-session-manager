@@ -1,3 +1,10 @@
+//! Legacy JSON metadata store.
+//!
+//! DEPRECATED: This module exists only for migration from older versions.
+//! New code should use KsmDatabase directly.
+//!
+//! TODO(v0.3.0): Remove this module and JsonMetadataStore.
+
 use log::debug;
 use std::collections::HashMap;
 use std::fs;
