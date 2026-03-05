@@ -267,7 +267,11 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::DeleteArchive { target } => {
             cmd_delete_archive(&db, &target, &directory)?;
         }
-        Commands::ShowArchive { name, exchange, no_pager } => {
+        Commands::ShowArchive {
+            name,
+            exchange,
+            no_pager,
+        } => {
             cmd_show_archive(&db, &name, exchange, no_pager, &directory)?;
         }
     }
@@ -319,8 +323,12 @@ fn cmd_name(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -336,10 +344,17 @@ fn cmd_name(
     if result.affected_ids.len() > 1 {
         println!(
             "{}",
-            styles::success(&format!("Set name for {} sessions: {}", result.affected_ids.len(), name))
+            styles::success(&format!(
+                "Set name for {} sessions: {}",
+                result.affected_ids.len(),
+                name
+            ))
         );
     } else {
-        println!("{}", styles::success(&format!("Set name for [{}]: {}", index, name)));
+        println!(
+            "{}",
+            styles::success(&format!("Set name for [{}]: {}", index, name))
+        );
     }
 
     Ok(())
@@ -353,8 +368,12 @@ fn cmd_tag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -370,10 +389,17 @@ fn cmd_tag(
     if result.affected_ids.len() > 1 {
         println!(
             "{}",
-            styles::success(&format!("Added tags to {} sessions: {}", result.affected_ids.len(), tags.join(", ")))
+            styles::success(&format!(
+                "Added tags to {} sessions: {}",
+                result.affected_ids.len(),
+                tags.join(", ")
+            ))
         );
     } else {
-        println!("{}", styles::success(&format!("Added tags to [{}]: {}", index, tags.join(", "))));
+        println!(
+            "{}",
+            styles::success(&format!("Added tags to [{}]: {}", index, tags.join(", ")))
+        );
     }
 
     Ok(())
@@ -387,8 +413,12 @@ fn cmd_untag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -404,25 +434,46 @@ fn cmd_untag(
     if result.affected_ids.len() > 1 {
         println!(
             "{}",
-            styles::success(&format!("Removed tags from {} sessions: {}", result.affected_ids.len(), tags.join(", ")))
+            styles::success(&format!(
+                "Removed tags from {} sessions: {}",
+                result.affected_ids.len(),
+                tags.join(", ")
+            ))
         );
     } else {
-        println!("{}", styles::success(&format!("Removed tags from [{}]: {}", index, tags.join(", "))));
+        println!(
+            "{}",
+            styles::success(&format!(
+                "Removed tags from [{}]: {}",
+                index,
+                tags.join(", ")
+            ))
+        );
     }
 
     Ok(())
 }
 
 fn cmd_clean_metadata(source: &dyn SessionSource, db: &KsmDatabase, directory: &str) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     let stale = metadata::clean_metadata(&all_sessions, &mut meta, db)?;
 
     if stale.is_empty() {
         println!("No stale metadata found.");
     } else {
-        println!("{}", styles::success(&format!("Removed metadata for {} deleted session(s):", stale.len())));
+        println!(
+            "{}",
+            styles::success(&format!(
+                "Removed metadata for {} deleted session(s):",
+                stale.len()
+            ))
+        );
         for (_, display_name) in &stale {
             println!("  - {}", display_name);
         }
@@ -527,8 +578,12 @@ fn cmd_link(
     parent_index: usize,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(child_index, all_sessions.len())?;
     sessions::validate_index(parent_index, all_sessions.len())?;
@@ -587,17 +642,28 @@ fn cmd_link(
 
     println!(
         "{}",
-        styles::success(&format!("Linked session [{}] to parent [{}]", child_index, parent_index))
+        styles::success(&format!(
+            "Linked session [{}] to parent [{}]",
+            child_index, parent_index
+        ))
     );
     if let Some(name) = &result.inherited_name {
-        println!("{}", styles::success(&format!("Inherited name: \"{}\"", name)));
+        println!(
+            "{}",
+            styles::success(&format!("Inherited name: \"{}\"", name))
+        );
     }
     if !result.inherited_tags.is_empty() {
         println!(
             "{}",
             styles::success(&format!(
                 "Inherited tags: {}",
-                result.inherited_tags.iter().cloned().collect::<Vec<_>>().join(", ")
+                result
+                    .inherited_tags
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
         );
     }
@@ -612,8 +678,12 @@ fn cmd_unlink(
     keep_metadata: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids: _,
+    } = sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = &all_sessions[index].id;
@@ -635,9 +705,18 @@ fn cmd_unlink(
         .position(|s| s.id == result.former_parent_id);
 
     if let Some(pidx) = parent_idx {
-        println!("{}", styles::success(&format!("Unlinked session [{}] from parent [{}]", index, pidx)));
+        println!(
+            "{}",
+            styles::success(&format!(
+                "Unlinked session [{}] from parent [{}]",
+                index, pidx
+            ))
+        );
     } else {
-        println!("{}", styles::success(&format!("Unlinked session [{}]", index)));
+        println!(
+            "{}",
+            styles::success(&format!("Unlinked session [{}]", index))
+        );
     }
 
     Ok(())
@@ -649,8 +728,12 @@ fn cmd_detect_links(
     force: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids } = 
-        sessions::list_sessions(source, db, directory)?;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids,
+    } = sessions::list_sessions(source, db, directory)?;
 
     if all_sessions.is_empty() {
         println!("No sessions found.");
@@ -689,9 +772,19 @@ fn cmd_detect_links(
         let child_time = display::format_time_compact(candidate.child.updated_at);
         let parent_time = display::format_time_compact(parent.updated_at);
 
-        println!("[{}] {} ({})", child_idx, child_name, styles::time(&child_time));
+        println!(
+            "[{}] {} ({})",
+            child_idx,
+            child_name,
+            styles::time(&child_time)
+        );
         println!("    might continue from");
-        println!("[{}] {} ({})", parent_idx, parent_name, styles::time(&parent_time));
+        println!(
+            "[{}] {} ({})",
+            parent_idx,
+            parent_name,
+            styles::time(&parent_time)
+        );
 
         print!("\nLink them? (y/n): ");
         io::stdout().flush()?;
@@ -706,11 +799,20 @@ fn cmd_detect_links(
                 &mut meta,
                 db,
             )?;
-            println!("{}", styles::success(&format!("Linked [{}] to [{}] \"{}\"", child_idx, parent_idx, parent_name)));
+            println!(
+                "{}",
+                styles::success(&format!(
+                    "Linked [{}] to [{}] \"{}\"",
+                    child_idx, parent_idx, parent_name
+                ))
+            );
 
             // Hint if parent is indexed
             if indexed_session_ids.contains(&candidate.parent_id) {
-                println!("  [{}] is searchable. To search this compacted session too: ksm index {}", parent_idx, child_idx);
+                println!(
+                    "  [{}] is searchable. To search this compacted session too: ksm index {}",
+                    parent_idx, child_idx
+                );
             }
             println!();
         } else {
@@ -866,10 +968,7 @@ fn cmd_index(
 
     println!(
         "{}",
-        styles::success(&format!(
-            "Indexed [{}] {}",
-            index, result.archive_name
-        ))
+        styles::success(&format!("Indexed [{}] {}", index, result.archive_name))
     );
 
     Ok(())
@@ -891,7 +990,10 @@ fn cmd_reindex(
         let result = match archive::reindex_session(&session.id, source, db) {
             Ok(r) => r,
             Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
-                println!("Session [{}] is not indexed. Use 'ksm index {}' to index it.", idx, idx);
+                println!(
+                    "Session [{}] is not indexed. Use 'ksm index {}' to index it.",
+                    idx, idx
+                );
                 return Ok(());
             }
             Err(e) => return Err(e.into()),
@@ -965,7 +1067,12 @@ fn cmd_delete(
     directory: &str,
 ) -> Result<()> {
     let list_result = sessions::list_sessions(source, db, directory)?;
-    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids } = list_result;
+    let SessionListResult {
+        all_sessions,
+        metadata: mut meta,
+        auto_linked: _,
+        indexed_session_ids,
+    } = list_result;
 
     let indices = match indices {
         Some(idx) => idx,
@@ -973,7 +1080,13 @@ fn cmd_delete(
             // Interactive delete: show sessions, prompt for indices
             println!();
             let visible = sessions::visible_session_indices(&all_sessions, &meta);
-            display::print_session_list(&all_sessions, &meta, &visible, &indexed_session_ids, false);
+            display::print_session_list(
+                &all_sessions,
+                &meta,
+                &visible,
+                &indexed_session_ids,
+                false,
+            );
             println!();
             print!("Enter sessions to delete (comma-separated): ");
             io::stdout().flush()?;
@@ -1040,14 +1153,20 @@ fn cmd_delete(
             let regular_count = result.deleted_ids.len() - result.indexed_count;
             match choice {
                 "1" => {
-                    println!("{}", styles::success(&format!("Deleted [{}] and relinked chain", idx)));
+                    println!(
+                        "{}",
+                        styles::success(&format!("Deleted [{}] and relinked chain", idx))
+                    );
                     if result.indexed_count > 0 {
                         println!("{}", styles::success("Search index preserved as archive."));
                     }
                 }
                 "2" | "3" => {
                     if regular_count > 0 {
-                        println!("{}", styles::success(&format!("Deleted {} session(s)", regular_count)));
+                        println!(
+                            "{}",
+                            styles::success(&format!("Deleted {} session(s)", regular_count))
+                        );
                     }
                     if result.indexed_count > 0 {
                         println!(
@@ -1088,7 +1207,10 @@ fn cmd_delete(
 
     let regular_count = result.deleted_ids.len() - result.indexed_count;
     if regular_count > 0 {
-        println!("{}", styles::success(&format!("Deleted {} session(s)", regular_count)));
+        println!(
+            "{}",
+            styles::success(&format!("Deleted {} session(s)", regular_count))
+        );
     }
     if result.indexed_count > 0 {
         println!(
@@ -1239,7 +1361,7 @@ fn cmd_show_archive(
 
 /// Compare database and CLI methods (testing only).
 fn cmd_compare_methods() -> Result<()> {
-    use crate::data::{KiroDatabase, KiroCliSource};
+    use crate::data::{KiroCliSource, KiroDatabase};
 
     eprintln!("=== Comparing Database vs CLI Methods ===\n");
 

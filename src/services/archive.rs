@@ -124,7 +124,11 @@ pub fn list_archives(directory: &str, db: &KsmDatabase) -> Result<Vec<Archive>> 
 }
 
 /// Get a full archived conversation for browsing.
-pub fn show_archive(archive_name: &str, directory: &str, db: &KsmDatabase) -> Result<ShowArchiveResult> {
+pub fn show_archive(
+    archive_name: &str,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<ShowArchiveResult> {
     let archive = db.get_archive(archive_name, directory)?;
     let chunks = db.get_chunks(archive.id)?;
     Ok(ShowArchiveResult { archive, chunks })
@@ -148,7 +152,11 @@ pub fn get_archive_by_index(index: usize, directory: &str, db: &KsmDatabase) -> 
 }
 
 /// Delete an archive and all its indexed content.
-pub fn delete_archive(archive_name: &str, directory: &str, db: &KsmDatabase) -> Result<DeleteArchiveResult> {
+pub fn delete_archive(
+    archive_name: &str,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<DeleteArchiveResult> {
     let archive = db.get_archive(archive_name, directory)?;
     db.delete_archive(archive.id)?;
 
@@ -234,7 +242,11 @@ pub fn index_session(
 }
 
 /// Reindex a specific session by session ID.
-pub fn reindex_session(session_id: &str, source: &dyn SessionSource, db: &KsmDatabase) -> Result<ReindexResult> {
+pub fn reindex_session(
+    session_id: &str,
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<ReindexResult> {
     let status = db.get_archive_status(session_id)?;
 
     let (name, archive_id) = match status {
@@ -279,7 +291,11 @@ pub fn reindex_session(session_id: &str, source: &dyn SessionSource, db: &KsmDat
 }
 
 /// Reindex all indexed sessions for a directory.
-pub fn reindex_all(directory: &str, source: &dyn SessionSource, db: &KsmDatabase) -> Result<Vec<ReindexResult>> {
+pub fn reindex_all(
+    directory: &str,
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<Vec<ReindexResult>> {
     let indexed = db.list_indexed(directory)?;
     let mut results = Vec::new();
 
@@ -327,7 +343,10 @@ pub struct PendingReindexResult {
 /// Process pending reindex on startup if configured.
 ///
 /// Call this from run() after creating KsmDatabase.
-pub fn process_pending_reindex(source: &dyn SessionSource, db: &KsmDatabase) -> Result<PendingReindexResult> {
+pub fn process_pending_reindex(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<PendingReindexResult> {
     if !db.auto_update_enabled() {
         return Ok(PendingReindexResult {
             session_name: None,
@@ -338,11 +357,13 @@ pub fn process_pending_reindex(source: &dyn SessionSource, db: &KsmDatabase) -> 
 
     let pending = match db.get_pending_reindex()? {
         Some(id) => id,
-        None => return Ok(PendingReindexResult {
-            session_name: None,
-            updated: false,
-            warning: None,
-        }),
+        None => {
+            return Ok(PendingReindexResult {
+                session_name: None,
+                updated: false,
+                warning: None,
+            });
+        }
     };
 
     let status = match db.get_archive_status(&pending)? {

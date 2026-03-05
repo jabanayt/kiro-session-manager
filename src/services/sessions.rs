@@ -18,7 +18,11 @@ pub struct SessionListResult {
 }
 
 /// Fetch sessions, load metadata, run auto-clean and auto-detect.
-pub fn list_sessions(source: &dyn SessionSource, db: &KsmDatabase, directory: &str) -> Result<SessionListResult> {
+pub fn list_sessions(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    directory: &str,
+) -> Result<SessionListResult> {
     let sessions = source.list_sessions()?;
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
@@ -46,7 +50,10 @@ pub fn list_sessions(source: &dyn SessionSource, db: &KsmDatabase, directory: &s
 }
 
 /// Get existing name and tags for a session (for CLI prompts).
-pub fn get_session_defaults(session_id: &str, db: &KsmDatabase) -> Result<(Option<String>, Vec<String>)> {
+pub fn get_session_defaults(
+    session_id: &str,
+    db: &KsmDatabase,
+) -> Result<(Option<String>, Vec<String>)> {
     let meta = db.get_metadata(session_id)?;
     let name = meta.as_ref().and_then(|m| m.name.clone());
     let tags: Vec<String> = meta

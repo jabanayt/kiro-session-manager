@@ -59,10 +59,10 @@ pub fn resume(
                 .get(&session.id)
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| session.preview.clone());
-            
+
             // Set pending reindex if session is indexed
             set_pending_reindex_if_indexed(&session.id, db)?;
-            
+
             prepare_resume(&session.id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: session.id.clone(),
@@ -73,9 +73,9 @@ pub fn resume(
         ResumeTarget::Name(name) => {
             let list_result = sessions::list_sessions(source, db, directory)?;
             let found = find_by_name(&name, &list_result.all_sessions, &list_result.metadata)?;
-            
+
             set_pending_reindex_if_indexed(&found.session_id, db)?;
-            
+
             prepare_resume(&found.session_id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: found.session_id,
@@ -93,7 +93,7 @@ pub fn resume(
                 ))),
                 1 => {
                     set_pending_reindex_if_indexed(&matches[0].session_id, db)?;
-                    
+
                     prepare_resume(&matches[0].session_id, source)?;
                     Ok(ResumeResult::Ready {
                         session_id: matches[0].session_id.clone(),

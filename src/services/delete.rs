@@ -38,21 +38,23 @@ pub fn delete_from_chain(
     match choice {
         ChainDeleteChoice::SingleRelink => {
             let relinked_info = chains::relink_around_session(session_id, metadata);
-            
+
             // Save relinked child's updated metadata
-            if let Some((child_id, _)) = &relinked_info {
-                if let Some(child_meta) = metadata.get(child_id) {
-                    db.set_metadata(child_id, child_meta)?;
-                }
+            if let Some((child_id, _)) = &relinked_info
+                && let Some(child_meta) = metadata.get(child_id)
+            {
+                db.set_metadata(child_id, child_meta)?;
             }
-            
+
             // Clear index if session is indexed before deleting
             let mut indexed_count = 0;
-            if let Some(ArchiveStatus::Indexed { archive_id, .. }) = db.get_archive_status(session_id)? {
+            if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                db.get_archive_status(session_id)?
+            {
                 db.set_indexed(archive_id, false)?;
                 indexed_count = 1;
             }
-            
+
             source.delete_session(session_id)?;
             metadata.remove(session_id);
             db.delete_metadata(session_id)?;
@@ -78,7 +80,9 @@ pub fn delete_from_chain(
             let mut indexed_count = 0;
             for id in &to_delete {
                 // Clear index if session is indexed before deleting
-                if let Some(ArchiveStatus::Indexed { archive_id, .. }) = db.get_archive_status(id)? {
+                if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                    db.get_archive_status(id)?
+                {
                     db.set_indexed(archive_id, false)?;
                     indexed_count += 1;
                 }
@@ -98,7 +102,9 @@ pub fn delete_from_chain(
             let mut indexed_count = 0;
             for id in &chain {
                 // Clear index if session is indexed before deleting
-                if let Some(ArchiveStatus::Indexed { archive_id, .. }) = db.get_archive_status(id)? {
+                if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                    db.get_archive_status(id)?
+                {
                     db.set_indexed(archive_id, false)?;
                     indexed_count += 1;
                 }

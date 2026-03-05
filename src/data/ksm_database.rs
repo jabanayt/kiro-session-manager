@@ -8,11 +8,10 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::config::{load_config, metadata_path, Config};
+use crate::config::{Config, load_config, metadata_path};
 use crate::error::{KsmError, Result};
 use crate::models::{
-    Archive, ArchiveStatus, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult,
-    SessionMetadata,
+    Archive, ArchiveStatus, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult, SessionMetadata,
 };
 
 /// State key for pending reindex tracking.
@@ -112,10 +111,7 @@ impl KsmDatabase {
     fn create_v1_schema(conn: &Connection) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
 
-        tx.execute(
-            "CREATE TABLE schema_version (version INTEGER NOT NULL)",
-            [],
-        )?;
+        tx.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)", [])?;
         tx.execute("INSERT INTO schema_version (version) VALUES (1)", [])?;
         tx.execute(
             "CREATE TABLE metadata (
@@ -288,7 +284,10 @@ impl KsmDatabase {
 
         // metadata_storage - default is "global"
         if config.metadata_storage != "global" {
-            lines.push(format!("metadata_storage = \"{}\"", config.metadata_storage));
+            lines.push(format!(
+                "metadata_storage = \"{}\"",
+                config.metadata_storage
+            ));
         } else {
             lines.push("# metadata_storage = \"global\"".to_string());
         }
@@ -594,8 +593,7 @@ impl KsmDatabase {
                 let name: String = row.get(1)?;
                 let is_indexed: bool = row.get::<_, i64>(2)? != 0;
                 Ok((id, name, is_indexed))
-            })
-        {
+            }) {
             Ok((id, name, is_indexed)) => {
                 if is_indexed {
                     Ok(Some(ArchiveStatus::Indexed {
@@ -615,7 +613,12 @@ impl KsmDatabase {
     }
 
     /// Save a new archive with its content chunks.
-    pub fn save_archive(&self, archive: &NewArchive, chunks: &[NewChunk], is_indexed: bool) -> Result<i64> {
+    pub fn save_archive(
+        &self,
+        archive: &NewArchive,
+        chunks: &[NewChunk],
+        is_indexed: bool,
+    ) -> Result<i64> {
         let conn = self.open()?;
         let tx = conn.unchecked_transaction()?;
 
@@ -800,7 +803,7 @@ impl KsmDatabase {
             "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
              FROM archives WHERE id = ?",
         )?
-        .query_row([archive_id], |row| Self::row_to_archive(row))
+        .query_row([archive_id], Self::row_to_archive)
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
                 KsmError::ArchiveNotFound(format!("id={}", archive_id))
@@ -843,7 +846,7 @@ impl KsmDatabase {
              FROM archives WHERE directory = ? AND is_indexed = FALSE ORDER BY archived_at DESC",
         )?;
 
-        let rows = stmt.query_map([directory], |row| Self::row_to_archive(row))?;
+        let rows = stmt.query_map([directory], Self::row_to_archive)?;
 
         let mut archives = Vec::new();
         for row in rows {
@@ -860,7 +863,7 @@ impl KsmDatabase {
              FROM archives WHERE directory = ? AND is_indexed = TRUE ORDER BY archived_at DESC",
         )?;
 
-        let rows = stmt.query_map([directory], |row| Self::row_to_archive(row))?;
+        let rows = stmt.query_map([directory], Self::row_to_archive)?;
 
         let mut archives = Vec::new();
         for row in rows {

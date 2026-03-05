@@ -91,8 +91,7 @@ pub fn tools_label() -> String {
 
 /// Highlight search match: inverse
 pub fn highlight(s: &str) -> String {
-    s.replace(">>>", ansi::INVERSE)
-        .replace("<<<", ansi::RESET)
+    s.replace(">>>", ansi::INVERSE).replace("<<<", ansi::RESET)
 }
 
 /// Format separator line: dim grey

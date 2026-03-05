@@ -252,7 +252,7 @@ pub fn link_sessions(
     }
 
     apply_link(child_id, parent_id, metadata);
-    
+
     // Save updated child metadata
     if let Some(child_meta) = metadata.get(child_id) {
         db.set_metadata(child_id, child_meta)?;

@@ -208,10 +208,16 @@ pub fn print_session_list(
         };
 
         // Calculate plain width for padding
-        let plain_name = if parent_idx.is_some() {
-            let pidx = parent_idx.unwrap();
+        let plain_name = if let Some(pidx) = parent_idx {
             let chain_plain = format!(" ↳ [{}]", pidx);
-            format!("{}{}", truncate_to_width(&name, NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))), chain_plain)
+            format!(
+                "{}{}",
+                truncate_to_width(
+                    &name,
+                    NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))
+                ),
+                chain_plain
+            )
         } else {
             truncate_to_width(&name, NAME_WIDTH)
         };
@@ -281,13 +287,15 @@ pub fn print_session_list(
     }
 
     // Legend
-    if indexed_session_ids.iter().any(|id| {
-        visible_indices
-            .iter()
-            .any(|&idx| &sessions[idx].id == id)
-    }) {
+    if indexed_session_ids
+        .iter()
+        .any(|id| visible_indices.iter().any(|&idx| &sessions[idx].id == id))
+    {
         println!();
-        println!("{}", styles::legend("[i] = indexed (searchable via ksm search)"));
+        println!(
+            "{}",
+            styles::legend("[i] = indexed (searchable via ksm search)")
+        );
     }
 }
 
@@ -325,7 +333,9 @@ pub fn print_archive_list(archives: &[Archive]) {
         let name_padded = format!(
             "{}{}",
             name_truncated,
-            " ".repeat(NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str())))
+            " ".repeat(
+                NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str()))
+            )
         );
 
         let time_str = format_time_compact(archive.archived_at);
@@ -373,7 +383,11 @@ pub fn format_search_result(result: &SearchResult, index: usize) -> String {
 
     if let Some(tool_snippet) = &result.tool_snippet {
         let tool_highlighted = styles::highlight(tool_snippet).replace('\n', "\n    ");
-        output.push_str(&format!("\n    {} {}", styles::tools_label(), tool_highlighted));
+        output.push_str(&format!(
+            "\n    {} {}",
+            styles::tools_label(),
+            tool_highlighted
+        ));
     }
 
     output
