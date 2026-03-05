@@ -1,6 +1,6 @@
-mod commands;
-mod display;
-mod pager;
+pub mod commands;
+pub mod display;
+pub mod pager;
+pub mod styles;
 
 pub use commands::{Cli, run};
-pub use display::{format_msg_count, format_session_display, format_time_ago, print_session_list};

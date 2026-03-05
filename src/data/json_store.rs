@@ -11,7 +11,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::config::metadata_path;
-use crate::data::MetadataStore;
 use crate::error::Result;
 use crate::models::SessionMetadata;
 
@@ -19,6 +18,7 @@ use crate::models::SessionMetadata;
 ///
 /// Supports global (`~/.ksm/metadata.json`), local (`.kiro/ksm-metadata.json`),
 /// and custom paths via config.
+#[allow(dead_code)]
 pub struct JsonMetadataStore {
     path: PathBuf,
 }
@@ -36,7 +36,8 @@ impl JsonMetadataStore {
     }
 }
 
-impl MetadataStore for JsonMetadataStore {
+#[allow(dead_code)]
+impl JsonMetadataStore {
     fn load(&self) -> Result<HashMap<String, SessionMetadata>> {
         if !self.path.exists() {
             return Ok(HashMap::new());

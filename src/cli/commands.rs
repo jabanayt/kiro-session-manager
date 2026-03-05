@@ -1,17 +1,17 @@
+use std::io::{self, Write};
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::io::{self, Write};
 
 use crate::cli::display;
 use crate::cli::pager;
-use crate::data::{
-    ArchiveStore, HybridSource, MetadataStore, SessionSource, SqliteArchiveStore,
-    SqliteMetadataStore,
-};
+use crate::cli::styles;
+use crate::data::{HybridSource, KsmDatabase, SessionSource};
 use crate::error::KsmError;
+use crate::services::sessions::SessionListResult;
 use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
-// --- Clap definitions (from current main.rs lines 15-87) ---
+// --- Clap definitions ---
 
 #[derive(Parser)]
 #[command(name = "ksm")]
@@ -101,6 +101,24 @@ pub enum Commands {
         tags: Option<Vec<String>>,
     },
 
+    /// Index a session for search (keeps session in Kiro)
+    Index {
+        /// Session index to index
+        index: usize,
+        /// Index name (prompted if not provided)
+        #[arg(long)]
+        name: Option<String>,
+        /// Tags (space-separated, prompted if not provided)
+        #[arg(long)]
+        tags: Option<Vec<String>>,
+    },
+
+    /// Update search index for indexed sessions
+    Reindex {
+        /// Session index to reindex (from ksm list), or all if omitted
+        index: Option<usize>,
+    },
+
     /// Search archived sessions
     Search {
         /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
@@ -121,8 +139,8 @@ pub enum Commands {
 
     /// Delete an archive and all its indexed content
     DeleteArchive {
-        /// Archive name to delete
-        name: String,
+        /// Archive index (from list-archives) or name
+        target: String,
     },
 
     /// Browse a full archived conversation
@@ -141,18 +159,15 @@ pub enum Commands {
 /// Main CLI dispatch. Called from main.rs.
 pub fn run(cli: Cli) -> Result<()> {
     let source = HybridSource::new();
-    let store =
-        SqliteMetadataStore::from_config().context("Failed to initialise metadata store")?;
+    let db = KsmDatabase::from_config().context("Failed to initialise database")?;
 
+    // TODO(0.3.0): Remove JSON migration - all users should be on SQLite by then
     // One-time migration from JSON (idempotent -- skips if JSON doesn't exist
     // or if metadata table already has data)
-    let existing_count = store
-        .load()
-        .context("Failed to check existing metadata")?
-        .len();
+    let existing_count = db.load_all_metadata()?.len();
 
     if existing_count == 0 {
-        match store.migrate_from_json() {
+        match db.migrate_from_json() {
             Ok(migrated) if migrated > 0 => {
                 println!(
                     "✓ Migrated {} metadata entries from JSON to SQLite",
@@ -167,6 +182,22 @@ pub fn run(cli: Cli) -> Result<()> {
         }
     }
 
+    // Process any pending reindex from previous session
+    let reindex_result = archive::process_pending_reindex(&source, &db)?;
+    if let Some(warning) = reindex_result.warning {
+        eprintln!(
+            "⚠ Failed to update search index for \"{}\": {}",
+            reindex_result.session_name.unwrap_or_default(),
+            warning
+        );
+        eprintln!("  Run 'ksm reindex' to retry");
+    }
+
+    let directory = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .to_string_lossy()
+        .to_string();
+
     match cli.command {
         Commands::List {
             show_parents,
@@ -175,23 +206,23 @@ pub fn run(cli: Cli) -> Result<()> {
             if compare_methods {
                 cmd_compare_methods()?;
             } else {
-                cmd_list(&source, &store, show_parents)?;
+                cmd_list(&source, &db, show_parents, &directory)?;
             }
         }
         Commands::Delete { indices, yes } => {
-            cmd_delete(&source, &store, indices, yes)?;
+            cmd_delete(&source, &db, indices, yes, &directory)?;
         }
         Commands::Name { index, name, chain } => {
-            cmd_name(&source, &store, index, &name, chain)?;
+            cmd_name(&source, &db, index, &name, chain, &directory)?;
         }
         Commands::Tag { index, tags, chain } => {
-            cmd_tag(&source, &store, index, &tags, chain)?;
+            cmd_tag(&source, &db, index, &tags, chain, &directory)?;
         }
         Commands::Untag { index, tags, chain } => {
-            cmd_untag(&source, &store, index, &tags, chain)?;
+            cmd_untag(&source, &db, index, &tags, chain, &directory)?;
         }
         Commands::CleanMetadata => {
-            cmd_clean_metadata(&source, &store)?;
+            cmd_clean_metadata(&source, &db, &directory)?;
         }
         Commands::Resume {
             index,
@@ -199,34 +230,28 @@ pub fn run(cli: Cli) -> Result<()> {
             tag,
             name,
         } => {
-            cmd_resume(&source, &store, index, last, tag, name)?;
+            cmd_resume(&source, &db, index, last, tag, name, &directory)?;
         }
         Commands::Link {
             child_index,
             parent_index,
         } => {
-            cmd_link(&source, &store, child_index, parent_index)?;
+            cmd_link(&source, &db, child_index, parent_index, &directory)?;
         }
         Commands::Unlink { index, keep } => {
-            cmd_unlink(&source, &store, index, keep)?;
+            cmd_unlink(&source, &db, index, keep, &directory)?;
         }
         Commands::DetectLinks { force } => {
-            cmd_detect_links(&source, &store, force)?;
+            cmd_detect_links(&source, &db, force, &directory)?;
         }
         Commands::Archive { index, name, tags } => {
-            let archive_store =
-                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
-            let directory = std::env::current_dir().context("Failed to get current directory")?;
-            let directory = directory.to_string_lossy();
-            cmd_archive(
-                &source,
-                &store,
-                &archive_store,
-                index,
-                name,
-                tags,
-                &directory,
-            )?;
+            cmd_archive(&source, &db, index, name, tags, &directory)?;
+        }
+        Commands::Index { index, name, tags } => {
+            cmd_index(&source, &db, index, name, tags, &directory)?;
+        }
+        Commands::Reindex { index } => {
+            cmd_reindex(&source, &db, index, &directory)?;
         }
         Commands::Search {
             query,
@@ -234,47 +259,31 @@ pub fn run(cli: Cli) -> Result<()> {
             expand,
             no_pager,
         } => {
-            let archive_store =
-                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
-            let directory = std::env::current_dir().context("Failed to get current directory")?;
-            let directory = directory.to_string_lossy();
-            cmd_search(&archive_store, &query, limit, expand, no_pager, &directory)?;
+            cmd_search(&db, &query, limit, expand, no_pager, &directory)?;
         }
         Commands::ListArchives => {
-            let archive_store =
-                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
-            let directory = std::env::current_dir().context("Failed to get current directory")?;
-            let directory = directory.to_string_lossy();
-            cmd_list_archives(&archive_store, &directory)?;
+            cmd_list_archives(&db, &directory)?;
         }
-        Commands::DeleteArchive { name } => {
-            let archive_store =
-                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
-            let directory = std::env::current_dir().context("Failed to get current directory")?;
-            let directory = directory.to_string_lossy();
-            cmd_delete_archive(&archive_store, &name, &directory)?;
+        Commands::DeleteArchive { target } => {
+            cmd_delete_archive(&db, &target, &directory)?;
         }
         Commands::ShowArchive { name, exchange, no_pager } => {
-            let archive_store =
-                SqliteArchiveStore::from_config().context("Failed to initialise archive store")?;
-            let directory = std::env::current_dir().context("Failed to get current directory")?;
-            let directory = directory.to_string_lossy();
-            cmd_show_archive(&archive_store, &name, exchange, no_pager, &directory)?;
+            cmd_show_archive(&db, &name, exchange, no_pager, &directory)?;
         }
     }
 
     Ok(())
 }
 
-// --- Command handlers (each calls services, handles I/O) ---
+// --- Command handlers ---
 
-/// List sessions.
 fn cmd_list(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     show_parents: bool,
+    directory: &str,
 ) -> Result<()> {
-    let result = sessions::list_sessions(source, store)?;
+    let result = sessions::list_sessions(source, db, directory)?;
 
     if result.all_sessions.is_empty() {
         println!("No sessions found.");
@@ -293,149 +302,25 @@ fn cmd_list(
         &result.all_sessions,
         &result.metadata,
         &visible,
+        &result.indexed_session_ids,
         show_parents,
     );
+
     println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
     Ok(())
 }
 
-/// Delete sessions with interactive chain handling.
-fn cmd_delete(
-    source: &dyn SessionSource,
-    store: &dyn MetadataStore,
-    indices: Option<Vec<usize>>,
-    skip_confirm: bool,
-) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
-
-    let indices = match indices {
-        Some(idx) => idx,
-        None => {
-            // Interactive delete: show sessions, prompt for indices
-            println!();
-            let visible = sessions::visible_session_indices(all_sessions, &meta);
-            display::print_session_list(all_sessions, &meta, &visible, false);
-            println!();
-            print!("Enter sessions to delete (comma-separated): ");
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            input
-                .trim()
-                .split(|c: char| c == ',' || c.is_whitespace())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.parse::<usize>())
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Invalid index format")?
-        }
-    };
-
-    sessions::validate_indices(&indices, all_sessions.len())?;
-
-    // Single session chain check
-    if indices.len() == 1 {
-        let idx = indices[0];
-        let session = &all_sessions[idx];
-
-        if let Some(chain_ctx) = metadata::get_chain_context(&session.id, &meta, all_sessions) {
-            // Show chain
-            print!("\nSession [{}] is part of a chain: ", idx);
-            for (i, chain_id) in chain_ctx.ordered_ids.iter().enumerate() {
-                if let Some(chain_idx) = all_sessions.iter().position(|s| &s.id == chain_id) {
-                    if i > 0 {
-                        print!(" → ");
-                    }
-                    print!("[{}]", chain_idx);
-                }
-            }
-            println!("\n");
-
-            println!("\nDelete options:");
-            println!("  1. Only [{}] (will relink around it)", idx);
-            println!("  2. [{}] and all parents", idx);
-            println!("  3. Entire chain");
-            print!("Choice (1-3) [1]: ");
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let choice = input.trim();
-            let choice = if choice.is_empty() { "1" } else { choice };
-
-            let chain_choice = match choice {
-                "1" => delete::ChainDeleteChoice::SingleRelink,
-                "2" => delete::ChainDeleteChoice::WithParents,
-                "3" => delete::ChainDeleteChoice::EntireChain,
-                _ => anyhow::bail!("Invalid choice"),
-            };
-
-            let result = delete::delete_from_chain(
-                &session.id,
-                chain_choice,
-                all_sessions,
-                &mut meta,
-                source,
-                store,
-            )?;
-
-            match choice {
-                "1" => println!("\n✓ Deleted [{}] and relinked chain", idx),
-                "2" => println!("\n✓ Deleted {} session(s)", result.deleted_ids.len()),
-                "3" => println!(
-                    "\n✓ Deleted entire chain ({} sessions)",
-                    result.deleted_ids.len()
-                ),
-                _ => {}
-            }
-            return Ok(());
-        }
-    }
-
-    // Standard deletion (no chain or multiple sessions)
-    println!("\nSessions to delete:");
-    for &idx in &indices {
-        let session = &all_sessions[idx];
-        let disp = display::format_session_display(session, &meta, all_sessions, true, true);
-        let time_ago = display::format_time_ago(session.updated_at);
-        println!("  [{}] {} | {}", idx, time_ago, disp);
-    }
-
-    if !skip_confirm {
-        print!("\nDelete these {} session(s)? (y/n): ", indices.len());
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled.");
-            return Ok(());
-        }
-    }
-
-    let ids: Vec<String> = indices
-        .iter()
-        .map(|&i| all_sessions[i].id.clone())
-        .collect();
-    println!("\nDeleting {} session(s)...", ids.len());
-    delete::delete_sessions(&ids, source, &mut meta, store)?;
-    println!("\nDone!");
-
-    Ok(())
-}
-
-/// Set name with optional chain expansion.
 fn cmd_name(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     index: usize,
     name: &str,
     apply_to_chain: bool,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -446,32 +331,30 @@ fn cmd_name(
         metadata::MetadataScope::Single(session_id)
     };
 
-    let result = metadata::set_name(scope, name, all_sessions, &mut meta, store)?;
+    let result = metadata::set_name(scope, name, &all_sessions, &mut meta, db)?;
 
     if result.affected_ids.len() > 1 {
         println!(
-            "\n✓ Set name for {} sessions: {}",
-            result.affected_ids.len(),
-            name
+            "{}",
+            styles::success(&format!("Set name for {} sessions: {}", result.affected_ids.len(), name))
         );
     } else {
-        println!("Set name for session [{}]: {}", index, name);
+        println!("{}", styles::success(&format!("Set name for [{}]: {}", index, name)));
     }
 
     Ok(())
 }
 
-/// Add tags with optional chain expansion.
 fn cmd_tag(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     index: usize,
     tags: &[String],
     apply_to_chain: bool,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -482,32 +365,30 @@ fn cmd_tag(
         metadata::MetadataScope::Single(session_id)
     };
 
-    let result = metadata::add_tags(scope, tags, all_sessions, &mut meta, store)?;
+    let result = metadata::add_tags(scope, tags, &all_sessions, &mut meta, db)?;
 
     if result.affected_ids.len() > 1 {
         println!(
-            "\n✓ Added tags to {} sessions: {}",
-            result.affected_ids.len(),
-            tags.join(", ")
+            "{}",
+            styles::success(&format!("Added tags to {} sessions: {}", result.affected_ids.len(), tags.join(", ")))
         );
     } else {
-        println!("Added tags to session [{}]: {}", index, tags.join(", "));
+        println!("{}", styles::success(&format!("Added tags to [{}]: {}", index, tags.join(", "))));
     }
 
     Ok(())
 }
 
-/// Remove tags with optional chain expansion.
 fn cmd_untag(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     index: usize,
     tags: &[String],
     apply_to_chain: bool,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -518,49 +399,46 @@ fn cmd_untag(
         metadata::MetadataScope::Single(session_id)
     };
 
-    let result = metadata::remove_tags(scope, tags, all_sessions, &mut meta, store)?;
+    let result = metadata::remove_tags(scope, tags, &all_sessions, &mut meta, db)?;
 
     if result.affected_ids.len() > 1 {
         println!(
-            "\n✓ Removed tags from {} sessions: {}",
-            result.affected_ids.len(),
-            tags.join(", ")
+            "{}",
+            styles::success(&format!("Removed tags from {} sessions: {}", result.affected_ids.len(), tags.join(", ")))
         );
     } else {
-        println!("Removed tags from session [{}]: {}", index, tags.join(", "));
+        println!("{}", styles::success(&format!("Removed tags from [{}]: {}", index, tags.join(", "))));
     }
 
     Ok(())
 }
 
-/// Clean metadata command.
-fn cmd_clean_metadata(source: &dyn SessionSource, store: &dyn MetadataStore) -> Result<()> {
-    let all_sessions = source.list_sessions().context("Failed to list sessions")?;
-    let mut meta = store.load().context("Failed to load metadata")?;
+fn cmd_clean_metadata(source: &dyn SessionSource, db: &KsmDatabase, directory: &str) -> Result<()> {
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
-    let stale = metadata::clean_metadata(&all_sessions, &mut meta, store)?;
+    let stale = metadata::clean_metadata(&all_sessions, &mut meta, db)?;
 
     if stale.is_empty() {
         println!("No stale metadata found.");
     } else {
-        println!("Removing metadata for {} deleted session(s):", stale.len());
+        println!("{}", styles::success(&format!("Removed metadata for {} deleted session(s):", stale.len())));
         for (_, display_name) in &stale {
             println!("  - {}", display_name);
         }
-        println!("\nDone!");
     }
 
     Ok(())
 }
 
-/// Resume a session.
 fn cmd_resume(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     index: Option<usize>,
     last: bool,
     tag: Option<String>,
     name: Option<String>,
+    directory: &str,
 ) -> Result<()> {
     let target = if last {
         resume::ResumeTarget::Last
@@ -572,7 +450,7 @@ fn cmd_resume(
         resume::ResumeTarget::Index(idx)
     } else {
         // Interactive picker
-        let list_result = sessions::list_sessions(source, store)?;
+        let list_result = sessions::list_sessions(source, db, directory)?;
         if list_result.all_sessions.is_empty() {
             println!("No sessions found.");
             return Ok(());
@@ -584,6 +462,7 @@ fn cmd_resume(
             &list_result.all_sessions,
             &list_result.metadata,
             &visible,
+            &list_result.indexed_session_ids,
             false,
         );
 
@@ -599,7 +478,7 @@ fn cmd_resume(
         resume::ResumeTarget::Index(idx)
     };
 
-    let result = resume::resume(target, source, store)?;
+    let result = resume::resume(target, source, db, directory)?;
 
     match result {
         resume::ResumeResult::LaunchDirect => {
@@ -630,7 +509,7 @@ fn cmd_resume(
             }
 
             let retry_target = resume::ResumeTarget::Index(matches[selection].original_index);
-            let retry_result = resume::resume(retry_target, source, store)?;
+            let retry_result = resume::resume(retry_target, source, db, directory)?;
             if let resume::ResumeResult::Ready { display_name, .. } = retry_result {
                 println!("Resuming '{}'...", display_name);
             }
@@ -641,16 +520,15 @@ fn cmd_resume(
     Ok(())
 }
 
-/// Link two sessions.
 fn cmd_link(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     child_index: usize,
     parent_index: usize,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(child_index, all_sessions.len())?;
     sessions::validate_index(parent_index, all_sessions.len())?;
@@ -658,10 +536,10 @@ fn cmd_link(
     let child_id = all_sessions[child_index].id.clone();
     let parent_id = all_sessions[parent_index].id.clone();
 
-    let result = match chains::link_sessions(&child_id, &parent_id, false, &mut meta, store) {
+    let result = match chains::link_sessions(&child_id, &parent_id, false, &mut meta, db) {
         Ok(result) => result,
         Err(crate::error::KsmError::MetadataConflict { .. }) => {
-            println!("⚠ Warning: Session [{}] already has metadata:", child_index);
+            println!("{}", styles::warning("Session already has metadata:"));
             if let Some(existing) = meta.get(&child_id) {
                 if let Some(name) = &existing.name {
                     println!("  Name: \"{}\"", name);
@@ -702,43 +580,40 @@ fn cmd_link(
                 return Ok(());
             }
 
-            chains::link_sessions(&child_id, &parent_id, true, &mut meta, store)?
+            chains::link_sessions(&child_id, &parent_id, true, &mut meta, db)?
         }
         Err(e) => return Err(e.into()),
     };
 
     println!(
-        "✓ Linked session [{}] to parent [{}]",
-        child_index, parent_index
+        "{}",
+        styles::success(&format!("Linked session [{}] to parent [{}]", child_index, parent_index))
     );
     if let Some(name) = &result.inherited_name {
-        println!("✓ Inherited name: \"{}\"", name);
+        println!("{}", styles::success(&format!("Inherited name: \"{}\"", name)));
     }
     if !result.inherited_tags.is_empty() {
         println!(
-            "✓ Inherited tags: {}",
-            result
-                .inherited_tags
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
+            "{}",
+            styles::success(&format!(
+                "Inherited tags: {}",
+                result.inherited_tags.iter().cloned().collect::<Vec<_>>().join(", ")
+            ))
         );
     }
 
     Ok(())
 }
 
-/// Unlink a session.
 fn cmd_unlink(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     index: usize,
     keep_metadata: bool,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids: _ } = 
+        sessions::list_sessions(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = &all_sessions[index].id;
@@ -753,30 +628,29 @@ fn cmd_unlink(
         false
     };
 
-    let result = chains::execute_unlink(session_id, clear, &mut meta, store)?;
+    let result = chains::execute_unlink(session_id, clear, &mut meta, db)?;
 
     let parent_idx = all_sessions
         .iter()
         .position(|s| s.id == result.former_parent_id);
 
     if let Some(pidx) = parent_idx {
-        println!("✓ Unlinked session [{}] from parent [{}]", index, pidx);
+        println!("{}", styles::success(&format!("Unlinked session [{}] from parent [{}]", index, pidx)));
     } else {
-        println!("✓ Unlinked session [{}]", index);
+        println!("{}", styles::success(&format!("Unlinked session [{}]", index)));
     }
 
     Ok(())
 }
 
-/// Detect and interactively link continuations.
 fn cmd_detect_links(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
     force: bool,
+    directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
-    let all_sessions = &list_result.all_sessions;
-    let mut meta = list_result.metadata;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids } = 
+        sessions::list_sessions(source, db, directory)?;
 
     if all_sessions.is_empty() {
         println!("No sessions found.");
@@ -785,7 +659,7 @@ fn cmd_detect_links(
 
     println!("Scanning for compacted sessions...\n");
 
-    let candidates = chains::detect_unlinked_continuations(all_sessions, &meta, source, force)?;
+    let candidates = chains::detect_unlinked_continuations(&all_sessions, &meta, source, force)?;
 
     if candidates.is_empty() {
         println!("No unlinked compacted sessions found.");
@@ -803,16 +677,21 @@ fn cmd_detect_links(
             .unwrap();
         let parent = &all_sessions[parent_idx];
 
-        let child_display =
-            display::format_session_display(&candidate.child, &meta, all_sessions, false, false);
-        let parent_display =
-            display::format_session_display(parent, &meta, all_sessions, false, false);
-        let child_time = display::format_time_ago(candidate.child.updated_at);
-        let parent_time = display::format_time_ago(parent.updated_at);
+        let child_name = meta
+            .get(&candidate.child.id)
+            .and_then(|m| m.name.clone())
+            .unwrap_or_else(|| candidate.child.preview.clone());
+        let parent_name = meta
+            .get(&candidate.parent_id)
+            .and_then(|m| m.name.clone())
+            .unwrap_or_else(|| parent.preview.clone());
 
-        println!("[{}] {} ({})", child_idx, child_display, child_time);
+        let child_time = display::format_time_compact(candidate.child.updated_at);
+        let parent_time = display::format_time_compact(parent.updated_at);
+
+        println!("[{}] {} ({})", child_idx, child_name, styles::time(&child_time));
         println!("    might continue from");
-        println!("[{}] {} ({})", parent_idx, parent_display, parent_time);
+        println!("[{}] {} ({})", parent_idx, parent_name, styles::time(&parent_time));
 
         print!("\nLink them? (y/n): ");
         io::stdout().flush()?;
@@ -825,9 +704,15 @@ fn cmd_detect_links(
                 &candidate.parent_id,
                 true,
                 &mut meta,
-                store,
+                db,
             )?;
-            println!("✓ Linked [{}] to [{}]\n", child_idx, parent_idx);
+            println!("{}", styles::success(&format!("Linked [{}] to [{}] \"{}\"", child_idx, parent_idx, parent_name)));
+
+            // Hint if parent is indexed
+            if indexed_session_ids.contains(&candidate.parent_id) {
+                println!("  [{}] is searchable. To search this compacted session too: ksm index {}", parent_idx, child_idx);
+            }
+            println!();
         } else {
             println!("Skipped.\n");
         }
@@ -836,17 +721,15 @@ fn cmd_detect_links(
     Ok(())
 }
 
-/// Archive a session.
 fn cmd_archive(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
-    archive_store: &dyn ArchiveStore,
+    db: &KsmDatabase,
     index: usize,
     name_flag: Option<String>,
     tags_flag: Option<Vec<String>>,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, store)?;
+    let list_result = sessions::list_sessions(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -855,22 +738,23 @@ fn cmd_archive(
         index, session.preview, session.msg_count
     );
 
+    let (existing_name, existing_tags) = sessions::get_session_defaults(&session.id, db)?;
+
     // Resolve name
     let name = if let Some(name) = name_flag {
         name
     } else {
-        let meta = list_result.metadata.get(&session.id);
-        let existing_name = meta.and_then(|m| m.name.as_deref()).unwrap_or("");
-        print!("Name [{}]: ", existing_name);
+        let default = existing_name.clone().unwrap_or_default();
+        print!("Name [{}]: ", default);
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         let input = input.trim();
         if input.is_empty() {
-            if existing_name.is_empty() {
+            if default.is_empty() {
                 anyhow::bail!("Archive name is required.");
             }
-            existing_name.to_string()
+            default
         } else {
             input.to_string()
         }
@@ -880,14 +764,6 @@ fn cmd_archive(
     let tags = if let Some(tags) = tags_flag {
         tags
     } else {
-        let meta = list_result.metadata.get(&session.id);
-        let existing_tags: Vec<String> = meta
-            .map(|m| {
-                let mut tags: Vec<String> = m.tags.iter().cloned().collect();
-                tags.sort();
-                tags
-            })
-            .unwrap_or_default();
         let existing_display = existing_tags.join(" ");
         print!("Tags [{}]: ", existing_display);
         io::stdout().flush()?;
@@ -908,31 +784,384 @@ fn cmd_archive(
         session.created_at,
         directory,
         source,
-        archive_store,
+        db,
     )?;
 
-    print!(
-        "Archived as '{}' ({} exchanges, {} messages)",
-        result.archive_name, result.chunk_count, result.message_count
-    );
+    let mut msg = format!("Archived [{}] as '{}'", index, result.archive_name);
     if result.pruned {
-        print!(" [pruned]");
+        msg.push_str(" [pruned]");
     }
-    println!();
+    println!("{}", styles::success(&msg));
 
     Ok(())
 }
 
-/// Search archives.
+/// Index a session (add to search, keep in Kiro).
+fn cmd_index(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    index: usize,
+    name_flag: Option<String>,
+    tags_flag: Option<Vec<String>>,
+    directory: &str,
+) -> Result<()> {
+    let list_result = sessions::list_sessions(source, db, directory)?;
+    sessions::validate_index(index, list_result.all_sessions.len())?;
+    let session = &list_result.all_sessions[index];
+
+    println!(
+        "Indexing session [{}] \"{}\" ({} messages)",
+        index, session.preview, session.msg_count
+    );
+
+    // Get existing defaults via service
+    let (existing_name, existing_tags) = sessions::get_session_defaults(&session.id, db)?;
+
+    // Resolve name
+    let name = if let Some(name) = name_flag {
+        name
+    } else {
+        let default = existing_name.clone().unwrap_or_default();
+        print!("Name [{}]: ", default);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            if default.is_empty() {
+                anyhow::bail!("Index name is required.");
+            }
+            default
+        } else {
+            input.to_string()
+        }
+    };
+
+    // Resolve tags
+    let tags = if let Some(tags) = tags_flag {
+        tags
+    } else {
+        let existing_display = existing_tags.join(" ");
+        print!("Tags [{}]: ", existing_display);
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.is_empty() {
+            existing_tags
+        } else {
+            input.split_whitespace().map(|s| s.to_string()).collect()
+        }
+    };
+
+    let result = archive::index_session(
+        &session.id,
+        &name,
+        tags,
+        session.created_at,
+        directory,
+        source,
+        db,
+    )?;
+
+    println!(
+        "{}",
+        styles::success(&format!(
+            "Indexed [{}] {}",
+            index, result.archive_name
+        ))
+    );
+
+    Ok(())
+}
+
+/// Reindex sessions.
+fn cmd_reindex(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    index: Option<usize>,
+    directory: &str,
+) -> Result<()> {
+    if let Some(idx) = index {
+        // Reindex specific session by list index
+        let list_result = sessions::list_sessions(source, db, directory)?;
+        sessions::validate_index(idx, list_result.all_sessions.len())?;
+        let session = &list_result.all_sessions[idx];
+
+        let result = match archive::reindex_session(&session.id, source, db) {
+            Ok(r) => r,
+            Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
+                println!("Session [{}] is not indexed. Use 'ksm index {}' to index it.", idx, idx);
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if result.updated {
+            println!(
+                "{}",
+                styles::success(&format!(
+                    "Reindexed '{}' ({} -> {} messages)",
+                    result.name, result.old_count, result.new_count
+                ))
+            );
+        } else {
+            println!("'{}' is already up to date.", result.name);
+        }
+    } else {
+        // Reindex all
+        let results = archive::reindex_all(directory, source, db)?;
+
+        if results.is_empty() {
+            println!("No indexed sessions found.");
+            return Ok(());
+        }
+
+        // Print warnings for any failures
+        for r in results.iter().filter(|r| r.error.is_some()) {
+            eprintln!(
+                "⚠ Failed to reindex \"{}\": {}",
+                r.name,
+                r.error.as_ref().unwrap()
+            );
+        }
+
+        let updated: Vec<_> = results.iter().filter(|r| r.updated).collect();
+        let failed: Vec<_> = results.iter().filter(|r| r.error.is_some()).collect();
+
+        if updated.is_empty() && failed.is_empty() {
+            println!("All {} indexed sessions are up to date.", results.len());
+        } else {
+            for r in &updated {
+                println!(
+                    "{}",
+                    styles::success(&format!(
+                        "Reindexed '{}' ({} -> {} messages)",
+                        r.name, r.old_count, r.new_count
+                    ))
+                );
+            }
+            if !failed.is_empty() {
+                eprintln!("\n{} session(s) failed to reindex.", failed.len());
+            }
+            if !updated.is_empty() {
+                println!(
+                    "\nUpdated {} of {} indexed sessions.",
+                    updated.len(),
+                    results.len()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_delete(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    indices: Option<Vec<usize>>,
+    skip_confirm: bool,
+    directory: &str,
+) -> Result<()> {
+    let list_result = sessions::list_sessions(source, db, directory)?;
+    let SessionListResult { all_sessions, metadata: mut meta, auto_linked: _, indexed_session_ids } = list_result;
+
+    let indices = match indices {
+        Some(idx) => idx,
+        None => {
+            // Interactive delete: show sessions, prompt for indices
+            println!();
+            let visible = sessions::visible_session_indices(&all_sessions, &meta);
+            display::print_session_list(&all_sessions, &meta, &visible, &indexed_session_ids, false);
+            println!();
+            print!("Enter sessions to delete (comma-separated): ");
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            input
+                .trim()
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<usize>())
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Invalid index format")?
+        }
+    };
+
+    sessions::validate_indices(&indices, all_sessions.len())?;
+
+    // Single session chain check
+    if indices.len() == 1 {
+        let idx = indices[0];
+        let session = &all_sessions[idx];
+
+        if let Some(chain_ctx) = metadata::get_chain_context(&session.id, &meta, &all_sessions) {
+            // Show chain
+            print!("\nSession [{}] is part of a chain: ", idx);
+            for (i, chain_id) in chain_ctx.ordered_ids.iter().enumerate() {
+                if let Some(chain_idx) = all_sessions.iter().position(|s| &s.id == chain_id) {
+                    if i > 0 {
+                        print!(" → ");
+                    }
+                    print!("[{}]", chain_idx);
+                }
+            }
+            println!("\n");
+
+            println!("\nDelete options:");
+            println!("  1. Only [{}] (will relink around it)", idx);
+            println!("  2. [{}] and all parents", idx);
+            println!("  3. Entire chain");
+            print!("Choice (1-3) [1]: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let choice = input.trim();
+            let choice = if choice.is_empty() { "1" } else { choice };
+
+            let chain_choice = match choice {
+                "1" => delete::ChainDeleteChoice::SingleRelink,
+                "2" => delete::ChainDeleteChoice::WithParents,
+                "3" => delete::ChainDeleteChoice::EntireChain,
+                _ => anyhow::bail!("Invalid choice"),
+            };
+
+            let result = delete::delete_from_chain(
+                &session.id,
+                chain_choice,
+                &all_sessions,
+                &mut meta,
+                source,
+                db,
+            )?;
+
+            let regular_count = result.deleted_ids.len() - result.indexed_count;
+            match choice {
+                "1" => {
+                    println!("{}", styles::success(&format!("Deleted [{}] and relinked chain", idx)));
+                    if result.indexed_count > 0 {
+                        println!("{}", styles::success("Search index preserved as archive."));
+                    }
+                }
+                "2" | "3" => {
+                    if regular_count > 0 {
+                        println!("{}", styles::success(&format!("Deleted {} session(s)", regular_count)));
+                    }
+                    if result.indexed_count > 0 {
+                        println!(
+                            "{}",
+                            styles::success(&format!(
+                                "Deleted {} indexed session(s). Search index preserved as archive.",
+                                result.indexed_count
+                            ))
+                        );
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+    }
+
+    // Standard deletion (no chain or multiple sessions)
+    println!("\nSessions to delete:");
+    display::print_session_list(&all_sessions, &meta, &indices, &indexed_session_ids, false);
+
+    if !skip_confirm {
+        print!("\nDelete these {} session(s)? (y/n): ", indices.len());
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    let ids: Vec<String> = indices
+        .iter()
+        .map(|&i| all_sessions[i].id.clone())
+        .collect();
+    let result = delete::delete_sessions(&ids, source, &mut meta, db)?;
+
+    let regular_count = result.deleted_ids.len() - result.indexed_count;
+    if regular_count > 0 {
+        println!("{}", styles::success(&format!("Deleted {} session(s)", regular_count)));
+    }
+    if result.indexed_count > 0 {
+        println!(
+            "{}",
+            styles::success(&format!(
+                "Deleted {} indexed session(s). Search index preserved as archive.",
+                result.indexed_count
+            ))
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_delete_archive(db: &KsmDatabase, target: &str, directory: &str) -> Result<()> {
+    // Try parsing as index first
+    let result = if let Ok(idx) = target.parse::<usize>() {
+        let archive_info = archive::get_archive_by_index(idx, directory, db)?;
+
+        print!(
+            "Delete archive '{}' ({} messages)? [y/N] ",
+            archive_info.name, archive_info.message_count
+        );
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if input.trim() != "y" && input.trim() != "Y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+
+        archive::delete_archive_by_index(idx, directory, db)?
+    } else {
+        // Treat as name
+        let archive_info = archive::get_archive_info(target, directory, db)?;
+
+        print!(
+            "Delete archive '{}' ({} messages)? [y/N] ",
+            target, archive_info.message_count
+        );
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if input.trim() != "y" && input.trim() != "Y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+
+        archive::delete_archive(target, directory, db)?
+    };
+
+    println!(
+        "{}",
+        styles::success(&format!(
+            "Deleted archive '{}' ({} messages)",
+            result.archive_name, result.message_count
+        ))
+    );
+
+    Ok(())
+}
+
 fn cmd_search(
-    archive_store: &dyn ArchiveStore,
+    db: &KsmDatabase,
     query: &str,
     limit: u32,
     expand: Option<usize>,
     no_pager: bool,
     directory: &str,
 ) -> Result<()> {
-    let results = archive::search_archives(query, limit, directory, archive_store)?;
+    let results = archive::search_archives(query, limit, directory, db)?;
 
     let output = if let Some(n) = expand {
         if n >= results.len() {
@@ -946,7 +1175,7 @@ fn cmd_search(
             &results[n].archive_name,
             results[n].exchange_index,
             directory,
-            archive_store,
+            db,
         )?;
         display::format_expanded_exchange(&chunk, &results[n].archive_name)
     } else {
@@ -962,48 +1191,20 @@ fn cmd_search(
     Ok(())
 }
 
-/// List archives.
-fn cmd_list_archives(archive_store: &dyn ArchiveStore, directory: &str) -> Result<()> {
-    let archives = archive::list_archives(directory, archive_store)?;
+fn cmd_list_archives(db: &KsmDatabase, directory: &str) -> Result<()> {
+    let archives = archive::list_archives(directory, db)?;
     display::print_archive_list(&archives);
     Ok(())
 }
 
-/// Delete an archive.
-fn cmd_delete_archive(archive_store: &dyn ArchiveStore, name: &str, directory: &str) -> Result<()> {
-    let archive_info = archive::get_archive_info(name, directory, archive_store)?;
-
-    print!(
-        "Delete archive '{}' ({} messages)? [y/N] ",
-        name, archive_info.message_count
-    );
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    if input.trim() != "y" && input.trim() != "Y" {
-        println!("Cancelled.");
-        return Ok(());
-    }
-
-    let result = archive::delete_archive(name, directory, archive_store)?;
-    println!(
-        "Deleted archive '{}' ({} messages)",
-        result.archive_name, result.message_count
-    );
-
-    Ok(())
-}
-
-/// Show a full archived conversation.
 fn cmd_show_archive(
-    archive_store: &dyn ArchiveStore,
+    db: &KsmDatabase,
     name: &str,
     exchange: Option<i32>,
     no_pager: bool,
     directory: &str,
 ) -> Result<()> {
-    let result = archive::show_archive(name, directory, archive_store)?;
+    let result = archive::show_archive(name, directory, db)?;
 
     if result.chunks.is_empty() {
         return Err(KsmError::InvalidInput(format!("Archive '{}' has no content.", name)).into());
@@ -1038,11 +1239,11 @@ fn cmd_show_archive(
 
 /// Compare database and CLI methods (testing only).
 fn cmd_compare_methods() -> Result<()> {
-    use crate::data::{DatabaseSource, KiroCliSource};
+    use crate::data::{KiroDatabase, KiroCliSource};
 
     eprintln!("=== Comparing Database vs CLI Methods ===\n");
 
-    let db_source = DatabaseSource::new();
+    let db_source = KiroDatabase::new();
     let cli_source = KiroCliSource::new();
 
     let result = match sessions::compare_sources(&db_source, &cli_source) {
