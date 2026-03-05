@@ -1,7 +1,7 @@
 use log::debug;
 use std::collections::{HashMap, HashSet};
 
-use crate::data::{MetadataStore, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::{KsmError, Result};
 use crate::models::{Session, SessionMetadata};
 
@@ -191,7 +191,7 @@ pub fn link_sessions(
     parent_id: &str,
     confirm_metadata_replace: bool,
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<LinkResult> {
     // --- Validation ---
 
@@ -251,10 +251,12 @@ pub fn link_sessions(
         }
     }
 
-    // --- Execute link ---
-
     apply_link(child_id, parent_id, metadata);
-    store.save(metadata)?;
+    
+    // Save updated child metadata
+    if let Some(child_meta) = metadata.get(child_id) {
+        db.set_metadata(child_id, child_meta)?;
+    }
 
     let child_metadata = metadata.get(child_id).unwrap();
     Ok(LinkResult {
@@ -272,7 +274,7 @@ pub fn execute_unlink(
     session_id: &str,
     clear_metadata: bool,
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<UnlinkResult> {
     // Single check: session must exist in metadata AND have a parent link
     let parent_id = metadata
@@ -289,8 +291,8 @@ pub fn execute_unlink(
         updated.tags.clear();
     }
 
-    metadata.insert(session_id.to_string(), updated);
-    store.save(metadata)?;
+    metadata.insert(session_id.to_string(), updated.clone());
+    db.set_metadata(session_id, &updated)?;
 
     Ok(UnlinkResult {
         session_id: session_id.to_string(),
@@ -405,7 +407,7 @@ pub fn auto_link_continuations(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<usize> {
     let candidates = detect_unlinked_continuations(sessions, metadata, source, false)?;
     if candidates.is_empty() {
@@ -414,8 +416,10 @@ pub fn auto_link_continuations(
 
     for candidate in &candidates {
         apply_link(&candidate.child.id, &candidate.parent_id, metadata);
+        if let Some(child_meta) = metadata.get(&candidate.child.id) {
+            db.set_metadata(&candidate.child.id, child_meta)?;
+        }
     }
 
-    store.save(metadata)?;
     Ok(candidates.len())
 }
