@@ -189,6 +189,10 @@ pub fn print_session_list(
     const TIME_WIDTH: usize = 8;
     const MSG_WIDTH: usize = 9;
 
+    // Calculate index column width based on largest index
+    let max_idx = visible_indices.iter().max().unwrap_or(&0);
+    let idx_width = format!("[{}]", max_idx).len();
+
     println!();
     for &idx in visible_indices {
         let session = &sessions[idx];
@@ -234,6 +238,12 @@ pub fn print_session_list(
         let msg_padded = format!("{:>width$}", msg_str, width = MSG_WIDTH);
 
         let idx_str = styles::index(idx);
+        let idx_plain = format!("[{}]", idx);
+        let idx_padded = format!(
+            "{}{}",
+            idx_str,
+            " ".repeat(idx_width.saturating_sub(idx_plain.len()))
+        );
         let indexed_str = if indexed {
             format!("  {}", styles::indexed_marker())
         } else {
@@ -248,7 +258,7 @@ pub fn print_session_list(
 
         println!(
             "{}{}  {}  {}  {}{}",
-            idx_str,
+            idx_padded,
             indexed_str,
             name_padded,
             styles::time(&time_padded),
