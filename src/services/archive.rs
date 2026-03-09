@@ -317,6 +317,25 @@ pub fn reindex_all(
     Ok(results)
 }
 
+/// Remove index from a session (delete archive entry, session stays in Kiro).
+pub fn unindex_session(session_id: &str, db: &KsmDatabase) -> Result<UnindexResult> {
+    match db.get_archive_status(session_id)? {
+        Some(ArchiveStatus::Indexed { name, archive_id }) => {
+            db.delete_archive(archive_id)?;
+            Ok(UnindexResult { name })
+        }
+        _ => Err(KsmError::InvalidInput(
+            "Session is not indexed.".to_string(),
+        )),
+    }
+}
+
+/// Result of an unindex operation.
+#[derive(Debug)]
+pub struct UnindexResult {
+    pub name: String,
+}
+
 /// Result of a reindex operation.
 #[derive(Debug)]
 pub struct ReindexResult {
