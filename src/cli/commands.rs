@@ -1375,15 +1375,25 @@ fn cmd_list_archives(db: &KsmDatabase, directory: &str) -> Result<()> {
 
 fn cmd_show_archive(
     db: &KsmDatabase,
-    name: &str,
+    target: &str,
     exchange: Option<i32>,
     no_pager: bool,
     directory: &str,
 ) -> Result<()> {
-    let result = archive::show_archive(name, directory, db)?;
+    // Try parsing as index first, otherwise treat as name
+    let archive_name = if let Ok(idx) = target.parse::<usize>() {
+        let archive = archive::get_archive_by_index(idx, directory, db)?;
+        archive.name
+    } else {
+        target.to_string()
+    };
+
+    let result = archive::show_archive(&archive_name, directory, db)?;
 
     if result.chunks.is_empty() {
-        return Err(KsmError::InvalidInput(format!("Archive '{}' has no content.", name)).into());
+        return Err(
+            KsmError::InvalidInput(format!("Archive '{}' has no content.", archive_name)).into(),
+        );
     }
 
     let output = if let Some(n) = exchange {
