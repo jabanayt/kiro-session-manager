@@ -88,11 +88,28 @@ pub fn search_archives(
     db: &KsmDatabase,
 ) -> Result<Vec<SearchResult>> {
     let query = SearchQuery {
-        query: query_text.to_string(),
+        query: sanitize_fts_query(query_text),
         directory: directory.to_string(),
         limit,
     };
     db.search(&query)
+}
+
+/// Sanitize a query string for FTS5.
+///
+/// Strips punctuation that causes syntax errors. These characters are not
+/// indexed by FTS5 anyway, so removing them doesn't affect search results.
+/// Hyphens are replaced with spaces to handle hyphenated words.
+fn sanitize_fts_query(query: &str) -> String {
+    let strip: &[char] = &[
+        '.', ',', '\'', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '+',
+    ];
+
+    query
+        .chars()
+        .filter(|c| !strip.contains(c))
+        .map(|c| if c == '-' { ' ' } else { c })
+        .collect()
 }
 
 /// Get the full exchange content for a specific search result.
