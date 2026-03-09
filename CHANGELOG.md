@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-03-09
+
+### Added
+
+- ksm index command - index a session for search while keeping it in Kiro
+- ksm reindex command - update search index for indexed sessions
+- [i] marker in ksm list showing indexed sessions
+- Index numbers in ksm list-archives output
+- Auto-reindex on next command after resuming an indexed session
+- [index] config section with auto_update option
+- Schema v3 migration with is_indexed column and state table
+- ksm unindex command to remove index from a session
+
+### Changed
+
+- Unified KsmDatabase replaces separate SqliteMetadataStore and ArchiveStore
+- Row-level database operations instead of load-all/save-all pattern
+- Centralised styles module for consistent colours across all commands
+- Unified colour scheme across ksm list, list-archives, and search
+- ksm archive now deletes session from Kiro after indexing
+- ksm delete on indexed session converts to archived, preserving search index
+- ksm list display redesigned with fixed columns and compact time format
+- ksm list-archives display redesigned to match ksm list format
+- CLI help reordered into logical groups
+- Services receive directory as parameter instead of calling current_dir() internally
+- Documented -V short flag for version in INSTALLATION.md
+
+### Fixed
+
+- Search queries with punctuation no longer cause FTS5 syntax errors
+- show-archive now accepts index number from list-archives as well as archive name
+- pending_reindex flag now cleared when auto_update config is disabled
+
 ## [0.2.3] - 2026-03-03
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "ksm"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 description = "A lightweight CLI tool to manage kiro-cli chat sessions"
 authors = ["Sean"]
@@ -19,3 +19,4 @@ serde_json = "1.0"
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 libc = "0.2"
+unicode-width = "0.2"

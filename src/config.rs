@@ -14,6 +14,8 @@ pub struct Config {
     pub auto_detect_continuations: bool,
     #[serde(default = "default_auto_clean")]
     pub auto_clean: bool,
+    #[serde(default)]
+    pub index: IndexConfig,
 }
 
 fn default_metadata_storage() -> String {
@@ -28,6 +30,24 @@ fn default_auto_clean() -> bool {
     true
 }
 
+fn default_auto_update() -> bool {
+    true
+}
+
+/// Index-related configuration.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct IndexConfig {
+    /// Automatically update indexed sessions when resumed.
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
+}
+
+impl Default for IndexConfig {
+    fn default() -> Self {
+        Self { auto_update: true }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -35,6 +55,7 @@ impl Default for Config {
             custom_path: None,
             auto_detect_continuations: default_auto_detect(),
             auto_clean: default_auto_clean(),
+            index: IndexConfig::default(),
         }
     }
 }
@@ -71,6 +92,11 @@ auto_detect_continuations = false
 # Automatically clean stale metadata entries on list/resume
 # Set to false to disable (prevents metadata loss if database fails)
 auto_clean = true
+
+[index]
+# Automatically update indexed sessions when resumed
+# Set to false to require manual 'ksm reindex'
+auto_update = true
 "#;
 
     fs::write(&path, content)?;

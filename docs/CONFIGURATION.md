@@ -62,3 +62,16 @@ auto_clean = true  # Default: true
 Set to `false` if you experience database connectivity issues that cause metadata loss. When disabled, use `ksm clean-metadata` to manually remove stale entries.
 
 Even with `auto_clean = true`, KSM will skip cleanup if the session source returns zero sessions, as this typically indicates a database or CLI failure rather than genuinely having no sessions.
+
+## Index Auto-Update
+
+When you resume an indexed session and then quit Kiro, the search index can be automatically updated on your next ksm command.
+
+```toml
+[index]
+# Automatically update indexed sessions when resumed
+# Set to false to require manual 'ksm reindex'
+auto_update = true  # Default: true
+```
+
+Set to `false` if you prefer to manually control when indexes are updated using `ksm reindex`.

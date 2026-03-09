@@ -1,10 +1,16 @@
+//! Legacy JSON metadata store.
+//!
+//! DEPRECATED: This module exists only for migration from older versions.
+//! New code should use KsmDatabase directly.
+//!
+//! TODO(v0.3.0): Remove this module and JsonMetadataStore.
+
 use log::debug;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use crate::config::metadata_path;
-use crate::data::MetadataStore;
 use crate::error::Result;
 use crate::models::SessionMetadata;
 
@@ -12,6 +18,7 @@ use crate::models::SessionMetadata;
 ///
 /// Supports global (`~/.ksm/metadata.json`), local (`.kiro/ksm-metadata.json`),
 /// and custom paths via config.
+#[allow(dead_code)]
 pub struct JsonMetadataStore {
     path: PathBuf,
 }
@@ -29,7 +36,8 @@ impl JsonMetadataStore {
     }
 }
 
-impl MetadataStore for JsonMetadataStore {
+#[allow(dead_code)]
+impl JsonMetadataStore {
     fn load(&self) -> Result<HashMap<String, SessionMetadata>> {
         if !self.path.exists() {
             return Ok(HashMap::new());

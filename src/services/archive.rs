@@ -4,20 +4,17 @@
 //! conversations via SessionSource, processes them into clean chunks,
 //! and saves/searches via ArchiveStore.
 
-use crate::data::{ArchiveStore, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::{KsmError, Result};
 use crate::models::{
-    Archive, ArchiveResult, AssistantContent, Chunk, ConversationData, DeleteArchiveResult,
-    NewArchive, NewChunk, SearchQuery, SearchResult, ShowArchiveResult, ToolCall,
-    ToolResultContent, UserContent,
+    Archive, ArchiveResult, ArchiveStatus, AssistantContent, Chunk, ConversationData,
+    DeleteArchiveResult, NewArchive, NewChunk, SearchQuery, SearchResult, ShowArchiveResult,
+    ToolCall, ToolResultContent, UserContent,
 };
 
 // --- Archive operation ---
 
-/// Archive a session: extract conversation, clean, chunk, and save.
-///
-/// This is a complete operation. The CLI provides the name and tags
-/// (after prompting the user if needed). The service does the rest.
+/// Archive a session: extract conversation, clean, chunk, save, then delete.
 pub fn archive_session(
     session_id: &str,
     name: &str,
@@ -25,9 +22,209 @@ pub fn archive_session(
     session_created_at: i64,
     directory: &str,
     source: &dyn SessionSource,
-    archive_store: &dyn ArchiveStore,
+    db: &KsmDatabase,
 ) -> Result<ArchiveResult> {
-    if let Some(existing_name) = archive_store.is_archived(session_id)? {
+    // Check if already indexed - if so, convert to archive
+    if let Some(status) = db.get_archive_status(session_id)? {
+        match status {
+            ArchiveStatus::Indexed { archive_id, .. } => {
+                // Convert indexed to archived
+                db.set_indexed(archive_id, false)?;
+                source.delete_session(session_id)?;
+                let archive = db.get_archive_by_id(archive_id)?;
+                return Ok(ArchiveResult {
+                    archive_name: archive.name,
+                    chunk_count: 0, // Already indexed
+                    message_count: archive.message_count,
+                    pruned: archive.pruned,
+                });
+            }
+            ArchiveStatus::Archived { name, .. } => {
+                return Err(KsmError::AlreadyArchived(name));
+            }
+        }
+    }
+
+    let conversation = source.get_conversation(session_id)?;
+    let pruned = is_pruned(&conversation);
+    let chunks = extract_chunks(&conversation);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    let new_archive = NewArchive {
+        session_id: session_id.to_string(),
+        name: name.to_string(),
+        directory: directory.to_string(),
+        message_count: conversation.history.len() as u32,
+        session_created_at,
+        archived_at: now,
+        tags,
+        pruned,
+    };
+
+    db.save_archive(&new_archive, &chunks, false)?; // is_indexed = false
+
+    // Delete session from Kiro
+    source.delete_session(session_id)?;
+
+    Ok(ArchiveResult {
+        archive_name: name.to_string(),
+        chunk_count: chunks.len(),
+        message_count: new_archive.message_count,
+        pruned,
+    })
+}
+
+// --- Search operation ---
+
+/// Search archived sessions for the given project directory.
+pub fn search_archives(
+    query_text: &str,
+    limit: u32,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<Vec<SearchResult>> {
+    let query = SearchQuery {
+        query: sanitize_fts_query(query_text),
+        directory: directory.to_string(),
+        limit,
+    };
+    db.search(&query)
+}
+
+/// Sanitize a query string for FTS5.
+///
+/// Strips punctuation that causes syntax errors. These characters are not
+/// indexed by FTS5 anyway, so removing them doesn't affect search results.
+/// Hyphens are replaced with spaces to handle hyphenated words.
+fn sanitize_fts_query(query: &str) -> String {
+    let strip: &[char] = &[
+        '.', ',', '\'', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '+',
+    ];
+
+    query
+        .chars()
+        .filter(|c| !strip.contains(c))
+        .map(|c| if c == '-' { ' ' } else { c })
+        .collect()
+}
+
+/// Get the full exchange content for a specific search result.
+///
+/// Used by --expand to show the complete exchange instead of just a snippet.
+pub fn get_expanded_result(
+    archive_name: &str,
+    exchange_index: i32,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<Chunk> {
+    let archive = db.get_archive(archive_name, directory)?;
+    let chunks = db.get_chunks(archive.id)?;
+
+    chunks
+        .into_iter()
+        .find(|c| c.exchange_index == exchange_index)
+        .ok_or_else(|| {
+            KsmError::InvalidInput(format!(
+                "Exchange {} not found in archive '{}'.",
+                exchange_index, archive_name
+            ))
+        })
+}
+
+/// List all archives for the given project directory.
+pub fn list_archives(directory: &str, db: &KsmDatabase) -> Result<Vec<Archive>> {
+    db.list_archives(directory)
+}
+
+/// Get a full archived conversation for browsing.
+pub fn show_archive(
+    archive_name: &str,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<ShowArchiveResult> {
+    let archive = db.get_archive(archive_name, directory)?;
+    let chunks = db.get_chunks(archive.id)?;
+    Ok(ShowArchiveResult { archive, chunks })
+}
+
+/// Get archive info for confirmation prompts.
+pub fn get_archive_info(name: &str, directory: &str, db: &KsmDatabase) -> Result<Archive> {
+    db.get_archive(name, directory)
+}
+
+/// Get archive info by index (from list-archives display order).
+pub fn get_archive_by_index(index: usize, directory: &str, db: &KsmDatabase) -> Result<Archive> {
+    let archives = db.list_archives(directory)?;
+    if index >= archives.len() {
+        return Err(KsmError::IndexOutOfRange {
+            index,
+            max: archives.len().saturating_sub(1),
+        });
+    }
+    Ok(archives[index].clone())
+}
+
+/// Delete an archive and all its indexed content.
+pub fn delete_archive(
+    archive_name: &str,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<DeleteArchiveResult> {
+    let archive = db.get_archive(archive_name, directory)?;
+    db.delete_archive(archive.id)?;
+
+    Ok(DeleteArchiveResult {
+        archive_name: archive_name.to_string(),
+        message_count: archive.message_count,
+    })
+}
+
+/// Delete archive by index (from list-archives display order).
+pub fn delete_archive_by_index(
+    index: usize,
+    directory: &str,
+    db: &KsmDatabase,
+) -> Result<DeleteArchiveResult> {
+    let archives = db.list_archives(directory)?;
+
+    if index >= archives.len() {
+        return Err(KsmError::IndexOutOfRange {
+            index,
+            max: archives.len().saturating_sub(1),
+        });
+    }
+
+    let archive = &archives[index];
+    db.delete_archive(archive.id)?;
+
+    Ok(DeleteArchiveResult {
+        archive_name: archive.name.clone(),
+        message_count: archive.message_count,
+    })
+}
+
+// ========== Index Operations ==========
+
+/// Index a session (add to search without deleting from Kiro).
+pub fn index_session(
+    session_id: &str,
+    name: &str,
+    tags: Vec<String>,
+    session_created_at: i64,
+    directory: &str,
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<ArchiveResult> {
+    // Check if already indexed/archived
+    if let Some(status) = db.get_archive_status(session_id)? {
+        let existing_name = match status {
+            ArchiveStatus::Indexed { name, .. } => name,
+            ArchiveStatus::Archived { name, .. } => name,
+        };
         return Err(KsmError::AlreadyArchived(existing_name));
     }
 
@@ -51,7 +248,7 @@ pub fn archive_session(
         pruned,
     };
 
-    archive_store.save_archive(&new_archive, &chunks)?;
+    db.save_archive(&new_archive, &chunks, true)?; // is_indexed = true
 
     Ok(ArchiveResult {
         archive_name: name.to_string(),
@@ -61,89 +258,214 @@ pub fn archive_session(
     })
 }
 
-// --- Search operation ---
+/// Reindex a specific session by session ID.
+pub fn reindex_session(
+    session_id: &str,
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<ReindexResult> {
+    let status = db.get_archive_status(session_id)?;
 
-/// Search archived sessions for the given project directory.
-pub fn search_archives(
-    query_text: &str,
-    limit: u32,
-    directory: &str,
-    archive_store: &dyn ArchiveStore,
-) -> Result<Vec<SearchResult>> {
-    let query = SearchQuery {
-        query: query_text.to_string(),
-        directory: directory.to_string(),
-        limit,
+    let (name, archive_id) = match status {
+        Some(ArchiveStatus::Indexed { name, archive_id }) => (name, archive_id),
+        Some(ArchiveStatus::Archived { name, .. }) => {
+            return Err(KsmError::InvalidInput(format!(
+                "'{}' is archived (session deleted). Cannot reindex.",
+                name
+            )));
+        }
+        None => {
+            return Err(KsmError::InvalidInput(
+                "Session is not indexed.".to_string(),
+            ));
+        }
     };
-    archive_store.search(&query)
+
+    let archive = db.get_archive_by_id(archive_id)?;
+    let old_count = archive.message_count;
+
+    let conversation = source.get_conversation(session_id)?;
+    let new_count = conversation.history.len() as u32;
+
+    // Safety check
+    if new_count < old_count {
+        return Err(KsmError::InvalidInput(format!(
+            "Message count decreased ({} -> {}). Session may have been compacted.",
+            old_count, new_count
+        )));
+    }
+
+    let chunks = extract_chunks(&conversation);
+    db.update_archive(archive_id, new_count, &chunks)?;
+
+    Ok(ReindexResult {
+        name,
+        old_count,
+        new_count,
+        updated: new_count != old_count,
+        error: None,
+    })
 }
 
-/// Get the full exchange content for a specific search result.
+/// Reindex all indexed sessions for a directory.
+pub fn reindex_all(
+    directory: &str,
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<Vec<ReindexResult>> {
+    let indexed = db.list_indexed(directory)?;
+    let mut results = Vec::new();
+
+    for archive in indexed {
+        match reindex_session(&archive.session_id, source, db) {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(ReindexResult {
+                    name: archive.name,
+                    old_count: archive.message_count,
+                    new_count: archive.message_count,
+                    updated: false,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Remove index from a session (delete archive entry, session stays in Kiro).
+pub fn unindex_session(session_id: &str, db: &KsmDatabase) -> Result<UnindexResult> {
+    match db.get_archive_status(session_id)? {
+        Some(ArchiveStatus::Indexed { name, archive_id }) => {
+            db.delete_archive(archive_id)?;
+            Ok(UnindexResult { name })
+        }
+        _ => Err(KsmError::InvalidInput(
+            "Session is not indexed.".to_string(),
+        )),
+    }
+}
+
+/// Result of an unindex operation.
+#[derive(Debug)]
+pub struct UnindexResult {
+    pub name: String,
+}
+
+/// Result of a reindex operation.
+#[derive(Debug)]
+pub struct ReindexResult {
+    pub name: String,
+    pub old_count: u32,
+    pub new_count: u32,
+    pub updated: bool,
+    pub error: Option<String>,
+}
+
+/// Extract chunks from a conversation (public for auto-reindex).
+pub fn extract_chunks_from_conversation(conversation: &ConversationData) -> Vec<NewChunk> {
+    extract_chunks(conversation)
+}
+
+/// Result of pending reindex check on startup.
+#[derive(Debug)]
+pub struct PendingReindexResult {
+    pub session_name: Option<String>,
+    pub updated: bool,
+    pub warning: Option<String>,
+}
+
+/// Process pending reindex on startup if configured.
 ///
-/// Used by --expand to show the complete exchange instead of just a snippet.
-pub fn get_expanded_result(
-    archive_name: &str,
-    exchange_index: i32,
-    directory: &str,
-    archive_store: &dyn ArchiveStore,
-) -> Result<Chunk> {
-    let archive = archive_store.get_archive(archive_name, directory)?;
-    let chunks = archive_store.get_chunks(archive.id)?;
+/// Call this from run() after creating KsmDatabase.
+pub fn process_pending_reindex(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+) -> Result<PendingReindexResult> {
+    if !db.auto_update_enabled() {
+        db.clear_pending_reindex()?;
+        return Ok(PendingReindexResult {
+            session_name: None,
+            updated: false,
+            warning: None,
+        });
+    }
 
-    chunks
-        .into_iter()
-        .find(|c| c.exchange_index == exchange_index)
-        .ok_or_else(|| {
-            KsmError::InvalidInput(format!(
-                "Exchange {} not found in archive '{}'.",
-                exchange_index, archive_name
-            ))
-        })
-}
+    let pending = match db.get_pending_reindex()? {
+        Some(id) => id,
+        None => {
+            return Ok(PendingReindexResult {
+                session_name: None,
+                updated: false,
+                warning: None,
+            });
+        }
+    };
 
-// --- List operation ---
+    let status = match db.get_archive_status(&pending)? {
+        Some(ArchiveStatus::Indexed { name, archive_id }) => (name, archive_id),
+        _ => {
+            db.clear_pending_reindex()?;
+            return Ok(PendingReindexResult {
+                session_name: None,
+                updated: false,
+                warning: None,
+            });
+        }
+    };
 
-/// List all archives for the given project directory.
-pub fn list_archives(directory: &str, archive_store: &dyn ArchiveStore) -> Result<Vec<Archive>> {
-    archive_store.list_archives(directory)
-}
+    let (name, archive_id) = status;
+    let archive = db.get_archive_by_id(archive_id)?;
+    let stored_count = archive.message_count;
 
-// --- Show operation ---
+    let conversation = match source.get_conversation(&pending) {
+        Ok(c) => c,
+        Err(e) => {
+            db.clear_pending_reindex()?;
+            return Ok(PendingReindexResult {
+                session_name: Some(name),
+                updated: false,
+                warning: Some(e.to_string()),
+            });
+        }
+    };
 
-/// Get a full archived conversation for browsing.
-pub fn show_archive(
-    archive_name: &str,
-    directory: &str,
-    archive_store: &dyn ArchiveStore,
-) -> Result<ShowArchiveResult> {
-    let archive = archive_store.get_archive(archive_name, directory)?;
-    let chunks = archive_store.get_chunks(archive.id)?;
-    Ok(ShowArchiveResult { archive, chunks })
-}
+    let current_count = conversation.history.len() as u32;
 
-// --- Delete operation ---
+    if current_count < stored_count {
+        db.clear_pending_reindex()?;
+        return Ok(PendingReindexResult {
+            session_name: Some(name),
+            updated: false,
+            warning: None,
+        });
+    }
 
-/// Get archive info for confirmation prompts (e.g., before delete).
-pub fn get_archive_info(
-    name: &str,
-    directory: &str,
-    archive_store: &dyn ArchiveStore,
-) -> Result<Archive> {
-    archive_store.get_archive(name, directory)
-}
+    if current_count == stored_count {
+        db.clear_pending_reindex()?;
+        return Ok(PendingReindexResult {
+            session_name: Some(name),
+            updated: false,
+            warning: None,
+        });
+    }
 
-/// Delete an archive and all its indexed content.
-pub fn delete_archive(
-    archive_name: &str,
-    directory: &str,
-    archive_store: &dyn ArchiveStore,
-) -> Result<DeleteArchiveResult> {
-    let archive = archive_store.get_archive(archive_name, directory)?;
-    archive_store.delete_archive(archive.id)?;
+    let chunks = extract_chunks_from_conversation(&conversation);
+    if let Err(e) = db.update_archive(archive_id, current_count, &chunks) {
+        db.clear_pending_reindex()?;
+        return Ok(PendingReindexResult {
+            session_name: Some(name),
+            updated: false,
+            warning: Some(e.to_string()),
+        });
+    }
 
-    Ok(DeleteArchiveResult {
-        archive_name: archive_name.to_string(),
-        message_count: archive.message_count,
+    db.clear_pending_reindex()?;
+    Ok(PendingReindexResult {
+        session_name: Some(name),
+        updated: true,
+        warning: None,
     })
 }
 

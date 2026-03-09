@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::data::{MetadataStore, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::{KsmError, Result};
-use crate::models::{Session, SessionMetadata};
+use crate::models::{ArchiveStatus, Session, SessionMetadata};
 use crate::services::sessions;
 
 /// How the CLI/TUI identified the session to resume.
@@ -44,13 +44,14 @@ pub struct ResumeMatch {
 pub fn resume(
     target: ResumeTarget,
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
+    directory: &str,
 ) -> Result<ResumeResult> {
     match target {
         ResumeTarget::Last => Ok(ResumeResult::LaunchDirect),
 
         ResumeTarget::Index(index) => {
-            let list_result = sessions::list_sessions(source, store)?;
+            let list_result = sessions::list_sessions(source, db, directory)?;
             sessions::validate_index(index, list_result.all_sessions.len())?;
             let session = &list_result.all_sessions[index];
             let display_name = list_result
@@ -58,6 +59,10 @@ pub fn resume(
                 .get(&session.id)
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| session.preview.clone());
+
+            // Set pending reindex if session is indexed
+            set_pending_reindex_if_indexed(&session.id, db)?;
+
             prepare_resume(&session.id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: session.id.clone(),
@@ -66,8 +71,11 @@ pub fn resume(
         }
 
         ResumeTarget::Name(name) => {
-            let list_result = sessions::list_sessions(source, store)?;
+            let list_result = sessions::list_sessions(source, db, directory)?;
             let found = find_by_name(&name, &list_result.all_sessions, &list_result.metadata)?;
+
+            set_pending_reindex_if_indexed(&found.session_id, db)?;
+
             prepare_resume(&found.session_id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: found.session_id,
@@ -76,7 +84,7 @@ pub fn resume(
         }
 
         ResumeTarget::Tag(tag) => {
-            let list_result = sessions::list_sessions(source, store)?;
+            let list_result = sessions::list_sessions(source, db, directory)?;
             let matches = find_by_tag(&tag, &list_result.all_sessions, &list_result.metadata);
             match matches.len() {
                 0 => Err(KsmError::SessionNotFound(format!(
@@ -84,6 +92,8 @@ pub fn resume(
                     tag
                 ))),
                 1 => {
+                    set_pending_reindex_if_indexed(&matches[0].session_id, db)?;
+
                     prepare_resume(&matches[0].session_id, source)?;
                     Ok(ResumeResult::Ready {
                         session_id: matches[0].session_id.clone(),
@@ -94,6 +104,14 @@ pub fn resume(
             }
         }
     }
+}
+
+/// Set pending_reindex if the session is indexed.
+fn set_pending_reindex_if_indexed(session_id: &str, db: &KsmDatabase) -> Result<()> {
+    if let Some(ArchiveStatus::Indexed { .. }) = db.get_archive_status(session_id)? {
+        db.set_pending_reindex(session_id)?;
+    }
+    Ok(())
 }
 
 // --- Private helpers ---

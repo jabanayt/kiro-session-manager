@@ -1,8 +1,10 @@
+//! Session deletion with chain handling.
+
 use std::collections::HashMap;
 
-use crate::data::{MetadataStore, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::{Session, SessionMetadata};
+use crate::models::{ArchiveStatus, Session, SessionMetadata};
 use crate::services::chains;
 
 /// Result of a delete operation.
@@ -11,6 +13,7 @@ pub struct DeleteResult {
     pub deleted_ids: Vec<String>,
     /// Relinks performed: (child_id, new_parent_id or "none").
     pub relinked: Vec<(String, Option<String>)>,
+    pub indexed_count: usize,
 }
 
 /// How to handle chain deletion when a session is part of a chain.
@@ -30,19 +33,36 @@ pub fn delete_from_chain(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<DeleteResult> {
     match choice {
         ChainDeleteChoice::SingleRelink => {
             let relinked_info = chains::relink_around_session(session_id, metadata);
-            store.save(metadata)?;
+
+            // Save relinked child's updated metadata
+            if let Some((child_id, _)) = &relinked_info
+                && let Some(child_meta) = metadata.get(child_id)
+            {
+                db.set_metadata(child_id, child_meta)?;
+            }
+
+            // Clear index if session is indexed before deleting
+            let mut indexed_count = 0;
+            if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                db.get_archive_status(session_id)?
+            {
+                db.set_indexed(archive_id, false)?;
+                indexed_count = 1;
+            }
+
             source.delete_session(session_id)?;
             metadata.remove(session_id);
-            store.save(metadata)?;
+            db.delete_metadata(session_id)?;
 
             Ok(DeleteResult {
                 deleted_ids: vec![session_id.to_string()],
                 relinked: relinked_info.into_iter().collect(),
+                indexed_count,
             })
         }
         ChainDeleteChoice::WithParents => {
@@ -57,28 +77,46 @@ pub fn delete_from_chain(
                 }
             }
 
+            let mut indexed_count = 0;
             for id in &to_delete {
+                // Clear index if session is indexed before deleting
+                if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                    db.get_archive_status(id)?
+                {
+                    db.set_indexed(archive_id, false)?;
+                    indexed_count += 1;
+                }
                 source.delete_session(id)?;
                 metadata.remove(id);
+                db.delete_metadata(id)?;
             }
-            store.save(metadata)?;
 
             Ok(DeleteResult {
                 deleted_ids: to_delete,
                 relinked: vec![],
+                indexed_count,
             })
         }
         ChainDeleteChoice::EntireChain => {
             let chain = chains::get_full_chain(session_id, metadata, sessions);
+            let mut indexed_count = 0;
             for id in &chain {
+                // Clear index if session is indexed before deleting
+                if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+                    db.get_archive_status(id)?
+                {
+                    db.set_indexed(archive_id, false)?;
+                    indexed_count += 1;
+                }
                 source.delete_session(id)?;
                 metadata.remove(id);
+                db.delete_metadata(id)?;
             }
-            store.save(metadata)?;
 
             Ok(DeleteResult {
                 deleted_ids: chain,
                 relinked: vec![],
+                indexed_count,
             })
         }
     }
@@ -89,16 +127,24 @@ pub fn delete_sessions(
     session_ids: &[String],
     source: &dyn SessionSource,
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<DeleteResult> {
+    let mut indexed_count = 0;
+
     for id in session_ids {
+        // Clear index if session is indexed before deleting
+        if let Some(ArchiveStatus::Indexed { archive_id, .. }) = db.get_archive_status(id)? {
+            db.set_indexed(archive_id, false)?;
+            indexed_count += 1;
+        }
         source.delete_session(id)?;
         metadata.remove(id);
+        db.delete_metadata(id)?;
     }
-    store.save(metadata)?;
 
     Ok(DeleteResult {
         deleted_ids: session_ids.to_vec(),
         relinked: vec![],
+        indexed_count,
     })
 }
