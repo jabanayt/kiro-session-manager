@@ -24,12 +24,24 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    // === Session Management ===
     /// List all chat sessions with numbered indices
     List {
         #[arg(long)]
         show_parents: bool,
         #[arg(long, hide = true)]
         compare_methods: bool,
+    },
+    /// Resume a chat session
+    #[command(alias = "r")]
+    Resume {
+        index: Option<usize>,
+        #[arg(short, long)]
+        last: bool,
+        #[arg(short, long)]
+        tag: Option<String>,
+        #[arg(short, long)]
+        name: Option<String>,
     },
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
     #[command(alias = "d")]
@@ -61,17 +73,76 @@ pub enum Commands {
     },
     /// Clean up metadata for deleted sessions
     CleanMetadata,
-    /// Resume a chat session
-    #[command(alias = "r")]
-    Resume {
-        index: Option<usize>,
-        #[arg(short, long)]
-        last: bool,
-        #[arg(short, long)]
-        tag: Option<String>,
-        #[arg(short, long)]
+
+    // === Indexing & Search ===
+    /// Index a session for search (keeps session in Kiro)
+    Index {
+        /// Session index to index
+        index: usize,
+        /// Index name (prompted if not provided)
+        #[arg(long)]
         name: Option<String>,
+        /// Tags (space-separated, prompted if not provided)
+        #[arg(long)]
+        tags: Option<Vec<String>>,
     },
+    /// Remove index from a session (keeps session in Kiro)
+    Unindex {
+        /// Session index (from ksm list) or name
+        target: String,
+    },
+    /// Update search index for indexed sessions
+    Reindex {
+        /// Session index to reindex (from ksm list), or all if omitted
+        index: Option<usize>,
+    },
+    /// Search archived and indexed sessions
+    Search {
+        /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
+        query: String,
+        /// Maximum number of results (default: 50)
+        #[arg(long, default_value = "50")]
+        limit: u32,
+        /// Show full exchange for result N
+        #[arg(long)]
+        expand: Option<usize>,
+        /// Disable pager (print directly to stdout)
+        #[arg(long)]
+        no_pager: bool,
+    },
+
+    // === Archives ===
+    /// Archive a session for future search
+    Archive {
+        /// Session index to archive
+        index: usize,
+        /// Archive name (prompted if not provided)
+        #[arg(long)]
+        name: Option<String>,
+        /// Tags (space-separated, prompted if not provided)
+        #[arg(long)]
+        tags: Option<Vec<String>>,
+    },
+    /// List all archives for the current project
+    ListArchives,
+    /// Browse a full archived conversation
+    ShowArchive {
+        /// Archive index (from list-archives) or name
+        target: String,
+        /// Jump to a specific exchange
+        #[arg(long)]
+        exchange: Option<i32>,
+        /// Disable pager (print directly to stdout)
+        #[arg(long)]
+        no_pager: bool,
+    },
+    /// Delete an archive and all its indexed content
+    DeleteArchive {
+        /// Archive index (from list-archives) or name
+        target: String,
+    },
+
+    // === Session Linking ===
     /// Link a child session to a parent session
     Link {
         child_index: usize,
@@ -87,78 +158,6 @@ pub enum Commands {
     DetectLinks {
         #[arg(short, long)]
         force: bool,
-    },
-
-    /// Archive a session for future search
-    Archive {
-        /// Session index to archive
-        index: usize,
-        /// Archive name (prompted if not provided)
-        #[arg(long)]
-        name: Option<String>,
-        /// Tags (space-separated, prompted if not provided)
-        #[arg(long)]
-        tags: Option<Vec<String>>,
-    },
-
-    /// Index a session for search (keeps session in Kiro)
-    Index {
-        /// Session index to index
-        index: usize,
-        /// Index name (prompted if not provided)
-        #[arg(long)]
-        name: Option<String>,
-        /// Tags (space-separated, prompted if not provided)
-        #[arg(long)]
-        tags: Option<Vec<String>>,
-    },
-
-    /// Update search index for indexed sessions
-    Reindex {
-        /// Session index to reindex (from ksm list), or all if omitted
-        index: Option<usize>,
-    },
-
-    /// Remove index from a session (keeps session in Kiro)
-    Unindex {
-        /// Session index (from ksm list) or name
-        target: String,
-    },
-
-    /// Search archived sessions
-    Search {
-        /// FTS5 search query (supports "exact phrase", AND, OR, NOT, prefix*)
-        query: String,
-        /// Maximum number of results (default: 50)
-        #[arg(long, default_value = "50")]
-        limit: u32,
-        /// Show full exchange for result N
-        #[arg(long)]
-        expand: Option<usize>,
-        /// Disable pager (print directly to stdout)
-        #[arg(long)]
-        no_pager: bool,
-    },
-
-    /// List all archives for the current project
-    ListArchives,
-
-    /// Delete an archive and all its indexed content
-    DeleteArchive {
-        /// Archive index (from list-archives) or name
-        target: String,
-    },
-
-    /// Browse a full archived conversation
-    ShowArchive {
-        /// Archive name to browse
-        name: String,
-        /// Jump to a specific exchange
-        #[arg(long)]
-        exchange: Option<i32>,
-        /// Disable pager (print directly to stdout)
-        #[arg(long)]
-        no_pager: bool,
     },
 }
 
@@ -277,11 +276,11 @@ pub fn run(cli: Cli) -> Result<()> {
             cmd_delete_archive(&db, &target, &directory)?;
         }
         Commands::ShowArchive {
-            name,
+            target,
             exchange,
             no_pager,
         } => {
-            cmd_show_archive(&db, &name, exchange, no_pager, &directory)?;
+            cmd_show_archive(&db, &target, exchange, no_pager, &directory)?;
         }
     }
 
