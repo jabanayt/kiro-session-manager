@@ -384,6 +384,7 @@ pub fn process_pending_reindex(
     db: &KsmDatabase,
 ) -> Result<PendingReindexResult> {
     if !db.auto_update_enabled() {
+        db.clear_pending_reindex()?;
         return Ok(PendingReindexResult {
             session_name: None,
             updated: false,

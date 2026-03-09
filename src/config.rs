@@ -92,6 +92,11 @@ auto_detect_continuations = false
 # Automatically clean stale metadata entries on list/resume
 # Set to false to disable (prevents metadata loss if database fails)
 auto_clean = true
+
+[index]
+# Automatically update indexed sessions when resumed
+# Set to false to require manual 'ksm reindex'
+auto_update = true
 "#;
 
     fs::write(&path, content)?;
