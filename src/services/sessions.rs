@@ -1,54 +1,72 @@
+//! Session listing and validation.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::config::load_config;
-use crate::data::{MetadataStore, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
 use crate::models::{Session, SessionMetadata};
 use crate::services::{chains, metadata};
 
 /// Result of listing sessions.
 pub struct SessionListResult {
-    /// All sessions from the source (unfiltered, for index lookups).
     pub all_sessions: Vec<Session>,
-    /// Metadata for all sessions.
     pub metadata: HashMap<String, SessionMetadata>,
-    /// Number of sessions auto-linked during this list operation.
     pub auto_linked: usize,
+    /// Session IDs that are indexed (for display markers).
+    pub indexed_session_ids: Vec<String>,
 }
 
 /// Fetch sessions, load metadata, run auto-clean and auto-detect.
-///
-/// This is the primary entry point for getting session data.
 pub fn list_sessions(
     source: &dyn SessionSource,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
+    directory: &str,
 ) -> Result<SessionListResult> {
     let sessions = source.list_sessions()?;
-    let mut meta = store.load()?;
+    let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
 
-    // Auto-clean stale metadata if enabled
     if config.auto_clean && !sessions.is_empty() {
-        metadata::clean_stale_metadata(&sessions, &mut meta, store)?;
+        metadata::clean_stale_metadata(&sessions, &mut meta, db)?;
     }
 
-    // Auto-detect continuations if enabled
     let auto_linked = if config.auto_detect_continuations && !sessions.is_empty() {
-        chains::auto_link_continuations(&sessions, &mut meta, source, store)?
+        chains::auto_link_continuations(&sessions, &mut meta, source, db)?
     } else {
         0
     };
+
+    // Get indexed session IDs for display
+    let indexed = db.list_indexed(directory)?;
+    let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
 
     Ok(SessionListResult {
         all_sessions: sessions,
         metadata: meta,
         auto_linked,
+        indexed_session_ids,
     })
 }
 
+/// Get existing name and tags for a session (for CLI prompts).
+pub fn get_session_defaults(
+    session_id: &str,
+    db: &KsmDatabase,
+) -> Result<(Option<String>, Vec<String>)> {
+    let meta = db.get_metadata(session_id)?;
+    let name = meta.as_ref().and_then(|m| m.name.clone());
+    let tags: Vec<String> = meta
+        .map(|m| {
+            let mut tags: Vec<String> = m.tags.iter().cloned().collect();
+            tags.sort();
+            tags
+        })
+        .unwrap_or_default();
+    Ok((name, tags))
+}
+
 /// Filter out parent sessions (sessions referenced as parents by other sessions).
-///
-/// Returns indices into the original sessions vec.
 pub fn visible_session_indices(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,

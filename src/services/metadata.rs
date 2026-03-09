@@ -1,6 +1,8 @@
+//! Metadata operations: name, tags, cleaning.
+
 use std::collections::{HashMap, HashSet};
 
-use crate::data::MetadataStore;
+use crate::data::KsmDatabase;
 use crate::error::Result;
 use crate::models::{Session, SessionMetadata};
 use crate::services::chains;
@@ -47,7 +49,7 @@ pub fn set_name(
     name: &str,
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<MetadataUpdateResult> {
     let target_ids = resolve_scope(&scope, metadata, sessions);
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
@@ -56,9 +58,8 @@ pub fn set_name(
         let entry = metadata.entry(session_id.clone()).or_default();
         entry.name = Some(name.to_string());
         entry.directory = Some(current_dir.clone());
+        db.set_metadata(session_id, entry)?;
     }
-
-    store.save(metadata)?;
 
     Ok(MetadataUpdateResult {
         affected_ids: target_ids,
@@ -71,7 +72,7 @@ pub fn add_tags(
     tags: &[String],
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<MetadataUpdateResult> {
     let target_ids = resolve_scope(&scope, metadata, sessions);
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
@@ -82,9 +83,8 @@ pub fn add_tags(
         for tag in tags {
             entry.tags.insert(tag.clone());
         }
+        db.set_metadata(session_id, entry)?;
     }
-
-    store.save(metadata)?;
 
     Ok(MetadataUpdateResult {
         affected_ids: target_ids,
@@ -97,7 +97,7 @@ pub fn remove_tags(
     tags: &[String],
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<MetadataUpdateResult> {
     let target_ids = resolve_scope(&scope, metadata, sessions);
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
@@ -108,10 +108,9 @@ pub fn remove_tags(
             for tag in tags {
                 entry.tags.remove(tag);
             }
+            db.set_metadata(session_id, entry)?;
         }
     }
-
-    store.save(metadata)?;
 
     Ok(MetadataUpdateResult {
         affected_ids: target_ids,
@@ -125,7 +124,7 @@ pub fn remove_tags(
 pub fn clean_stale_metadata(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<()> {
     if sessions.is_empty() {
         return Ok(());
@@ -135,17 +134,15 @@ pub fn clean_stale_metadata(
     let session_ids: HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
 
     // Auto-migrate legacy entries: add directory field to active sessions
-    let mut migrated = false;
+    // TODO(v0.3.0): Remove this migration block - all users should have directory field by then
     for (id, meta) in metadata.iter_mut() {
         if meta.directory.is_none() && session_ids.contains(id.as_str()) {
             meta.directory = Some(current_dir.clone());
-            migrated = true;
+            db.set_metadata(id, meta)?;
         }
     }
-    if migrated {
-        store.save(metadata)?;
-    }
 
+    // Remove stale entries
     let stale_ids: Vec<_> = metadata
         .iter()
         .filter(|(id, meta)| {
@@ -158,11 +155,9 @@ pub fn clean_stale_metadata(
         .map(|(id, _)| id.clone())
         .collect();
 
-    if !stale_ids.is_empty() {
-        for id in &stale_ids {
-            metadata.remove(id);
-        }
-        store.save(metadata)?;
+    for id in &stale_ids {
+        metadata.remove(id);
+        db.delete_metadata(id)?;
     }
 
     Ok(())
@@ -176,7 +171,7 @@ pub fn clean_stale_metadata(
 pub fn clean_metadata(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    store: &dyn MetadataStore,
+    db: &KsmDatabase,
 ) -> Result<Vec<(String, String)>> {
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
     let session_ids: HashSet<_> = sessions.iter().map(|s| s.id.as_str()).collect();
@@ -196,11 +191,9 @@ pub fn clean_metadata(
         })
         .collect();
 
-    if !stale.is_empty() {
-        for (id, _) in &stale {
-            metadata.remove(id);
-        }
-        store.save(metadata)?;
+    for (id, _) in &stale {
+        metadata.remove(id);
+        db.delete_metadata(id)?;
     }
 
     Ok(stale)

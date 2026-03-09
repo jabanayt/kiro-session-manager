@@ -55,7 +55,7 @@ cp target/release/ksm ~/.local/bin/
 ## Verifying Installation
 
 ```bash
-ksm --version
+ksm -V        # or --version
 ```
 
 ## Requirements

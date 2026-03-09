@@ -7,20 +7,20 @@ use crate::error::{KsmError, Result};
 use crate::models::{ConversationData, Session};
 
 /// Session source backed by kiro-cli's SQLite database.
-pub struct DatabaseSource {
+pub struct KiroDatabase {
     db_path: PathBuf,
 }
 
-impl Default for DatabaseSource {
+impl Default for KiroDatabase {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DatabaseSource {
+impl KiroDatabase {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_default();
-        DatabaseSource {
+        KiroDatabase {
             db_path: PathBuf::from(home).join(".local/share/kiro-cli/data.sqlite3"),
         }
     }
@@ -71,9 +71,18 @@ impl DatabaseSource {
             msg_count,
         }
     }
+
+    /// Check if a session exists in Kiro's database.
+    pub fn session_exists(&self, session_id: &str) -> Result<bool> {
+        let conn = self.open_readonly()?;
+        let exists: bool = conn
+            .prepare("SELECT 1 FROM conversations_v2 WHERE conversation_id = ? LIMIT 1")?
+            .exists([session_id])?;
+        Ok(exists)
+    }
 }
 
-impl SessionSource for DatabaseSource {
+impl SessionSource for KiroDatabase {
     fn list_sessions(&self) -> Result<Vec<Session>> {
         let conn = self.open_readonly()?;
         let current_dir = std::env::current_dir()?.display().to_string();

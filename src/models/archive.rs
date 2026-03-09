@@ -3,6 +3,18 @@
 //! These types represent archived sessions, content chunks, search queries,
 //! and search results. Used by services/archive.rs and data/archive_store.rs.
 
+/// Status of a session in the archives table.
+///
+/// Used by services to determine how to handle a session that's
+/// already in the search index.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArchiveStatus {
+    /// Session is indexed (still in Kiro, searchable, can be updated).
+    Indexed { name: String, archive_id: i64 },
+    /// Session is archived (deleted from Kiro, searchable, permanent).
+    Archived { name: String, archive_id: i64 },
+}
+
 /// An archived session record.
 ///
 /// Stored in the `archives` table. Contains metadata about the archived
@@ -27,6 +39,8 @@ pub struct Archive {
     pub tags: Vec<String>,
     /// Whether the session was pruned before archiving.
     pub pruned: bool,
+    /// True if session still exists in Kiro (indexed), false if deleted (archived).
+    pub is_indexed: bool,
 }
 
 /// A single content chunk (one user-assistant exchange).
