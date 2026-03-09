@@ -48,6 +48,9 @@ ksm d 1,2,3
 # Resume a session
 ksm r 0
 
+# Name a session
+ksm name 0 "TUI Testing"
+
 # Tag a session
 ksm tag 0 work urgent
 
