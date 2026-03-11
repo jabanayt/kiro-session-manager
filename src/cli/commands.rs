@@ -997,7 +997,7 @@ fn cmd_reindex(
 
         let result = match archive::reindex_session(&session.id, source, db) {
             Ok(r) => r,
-            Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
+            Err(KsmError::NotIndexed(_)) => {
                 println!(
                     "Session [{}] is not indexed. Use 'ksm index {}' to index it.",
                     idx, idx
@@ -1085,7 +1085,7 @@ fn cmd_unindex(
                 styles::success(&format!("Removed index for '{}'", result.name))
             );
         }
-        Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
+        Err(KsmError::NotIndexed(_)) => {
             println!("Session is not indexed.");
         }
         Err(e) => return Err(e.into()),
@@ -1372,9 +1372,7 @@ fn cmd_show_archive(
     let result = archive::show_archive(&archive_name, directory, db)?;
 
     if result.chunks.is_empty() {
-        return Err(
-            KsmError::InvalidInput(format!("Archive '{}' has no content.", archive_name)).into(),
-        );
+        return Err(KsmError::EmptyArchive(archive_name).into());
     }
 
     let output = if let Some(n) = exchange {
@@ -1382,15 +1380,22 @@ fn cmd_show_archive(
             .chunks
             .iter()
             .find(|c| c.exchange_index == n)
-            .ok_or_else(|| {
-                KsmError::InvalidInput(format!(
+            .ok_or_else(|| KsmError::ExchangeNotFound {
+                index: n,
+                archive: archive_name.clone(),
+            });
+        match chunk {
+            Ok(c) => display::format_single_exchange(&result.archive, c),
+            Err(KsmError::ExchangeNotFound { index, .. }) => {
+                return Err(anyhow::anyhow!(
                     "Exchange {} not found. Archive has {} exchanges (0 to {}).",
-                    n,
+                    index,
                     result.chunks.len(),
                     result.chunks.len() - 1
-                ))
-            })?;
-        display::format_single_exchange(&result.archive, chunk)
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        }
     } else {
         display::format_full_archive(&result.archive, &result.chunks)
     };

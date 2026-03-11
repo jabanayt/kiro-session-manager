@@ -33,11 +33,23 @@ pub enum KsmError {
     #[error("kiro-cli error: {0}")]
     KiroCli(String),
 
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-
     #[error("No sessions found")]
     NoSessions,
+
+    #[error("Session is not indexed")]
+    NotIndexed(String),
+
+    #[error("Cannot reindex archived session '{0}' (session deleted)")]
+    CannotReindexArchived(String),
+
+    #[error("Message count decreased ({old} -> {new}). Session may have been compacted.")]
+    SessionCompacted { old: u32, new: u32 },
+
+    #[error("Exchange {index} not found in archive '{archive}'")]
+    ExchangeNotFound { index: i32, archive: String },
+
+    #[error("Archive '{0}' has no content")]
+    EmptyArchive(String),
 
     #[error("Archive not found: {0}")]
     ArchiveNotFound(String),
