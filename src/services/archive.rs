@@ -127,11 +127,9 @@ pub fn get_expanded_result(
     chunks
         .into_iter()
         .find(|c| c.exchange_index == exchange_index)
-        .ok_or_else(|| {
-            KsmError::InvalidInput(format!(
-                "Exchange {} not found in archive '{}'.",
-                exchange_index, archive_name
-            ))
+        .ok_or_else(|| KsmError::ExchangeNotFound {
+            index: exchange_index,
+            archive: archive_name.to_string(),
         })
 }
 
@@ -269,15 +267,10 @@ pub fn reindex_session(
     let (name, archive_id) = match status {
         Some(ArchiveStatus::Indexed { name, archive_id }) => (name, archive_id),
         Some(ArchiveStatus::Archived { name, .. }) => {
-            return Err(KsmError::InvalidInput(format!(
-                "'{}' is archived (session deleted). Cannot reindex.",
-                name
-            )));
+            return Err(KsmError::CannotReindexArchived(name));
         }
         None => {
-            return Err(KsmError::InvalidInput(
-                "Session is not indexed.".to_string(),
-            ));
+            return Err(KsmError::NotIndexed(session_id.to_string()));
         }
     };
 
@@ -289,10 +282,10 @@ pub fn reindex_session(
 
     // Safety check
     if new_count < old_count {
-        return Err(KsmError::InvalidInput(format!(
-            "Message count decreased ({} -> {}). Session may have been compacted.",
-            old_count, new_count
-        )));
+        return Err(KsmError::SessionCompacted {
+            old: old_count,
+            new: new_count,
+        });
     }
 
     let chunks = extract_chunks(&conversation);
@@ -341,9 +334,7 @@ pub fn unindex_session(session_id: &str, db: &KsmDatabase) -> Result<UnindexResu
             db.delete_archive(archive_id)?;
             Ok(UnindexResult { name })
         }
-        _ => Err(KsmError::InvalidInput(
-            "Session is not indexed.".to_string(),
-        )),
+        _ => Err(KsmError::NotIndexed(session_id.to_string())),
     }
 }
 
