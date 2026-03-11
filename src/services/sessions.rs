@@ -30,8 +30,9 @@ pub fn session_context(
     // Load cache (refreshes stale entries)
     let cache = crate::services::cache::sessions(source, db, directory)?;
 
-    // Build session list from cache
-    let sessions: Vec<Session> = cache.values().map(Session::from).collect();
+    // Build session list from cache, sorted by updated_at DESC
+    let mut sessions: Vec<Session> = cache.values().map(Session::from).collect();
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
