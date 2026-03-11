@@ -74,29 +74,17 @@ fn create_default_config() -> Result<Config> {
     let config = Config::default();
     let path = config_path()?;
 
-    let content = r#"# Metadata storage location
-# Options: "global", "local", "custom"
-# - global: ~/.ksm/metadata.json (shared across all projects)
-# - local: .kiro/ksm-metadata.json (per-directory, stored with sessions)
-# - custom: Use custom_path below
-metadata_storage = "global"
+    let content = r#"# KSM Configuration
+# Values shown in comments are defaults. Uncomment to override.
 
-# Custom metadata path (only used when metadata_storage = "custom")
-# custom_path = "/path/to/metadata.json"
+# metadata_storage = "global"
+# custom_path = "/path/to/ksm.db"
 
-# Auto-detect compacted sessions and suggest linking them to parents
-# Set to true to enable automatic detection on 'ksm list'
-# Only sessions with Kiro's Compact tag will be auto-linked
-auto_detect_continuations = false
-
-# Automatically clean stale metadata entries on list/resume
-# Set to false to disable (prevents metadata loss if database fails)
-auto_clean = true
+# auto_detect_continuations = false
+# auto_clean = true
 
 [index]
-# Automatically update indexed sessions when resumed
-# Set to false to require manual 'ksm reindex'
-auto_update = true
+# auto_update = true
 "#;
 
     fs::write(&path, content)?;
