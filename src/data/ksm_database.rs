@@ -82,6 +82,7 @@ impl KsmDatabase {
             Self::create_v1_schema(&conn)?;
             Self::migrate_v1_to_v2(&conn)?;
             self.migrate_v2_to_v3(&conn)?;
+            self.migrate_v3_to_v4(&conn)?;
         } else {
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
@@ -91,14 +92,19 @@ impl KsmDatabase {
                 1 => {
                     Self::migrate_v1_to_v2(&conn)?;
                     self.migrate_v2_to_v3(&conn)?;
+                    self.migrate_v3_to_v4(&conn)?;
                 }
                 2 => {
                     self.migrate_v2_to_v3(&conn)?;
+                    self.migrate_v3_to_v4(&conn)?;
                 }
-                3 => {} // Current version
+                3 => {
+                    self.migrate_v3_to_v4(&conn)?;
+                }
+                4 => {} // Current version
                 _ => {
                     return Err(KsmError::SchemaVersionMismatch {
-                        expected: 3,
+                        expected: 4,
                         found: version,
                     });
                 }
@@ -217,6 +223,17 @@ impl KsmDatabase {
         Ok(())
     }
 
+    /// Migrate v3 to v4: re-run config migration for consistency.
+    fn migrate_v3_to_v4(&self, conn: &Connection) -> Result<()> {
+        conn.execute("UPDATE schema_version SET version = 4", [])?;
+
+        // Re-run config migration (idempotent, catches verbose configs)
+        self.migrate_config_to_sparse()?;
+
+        debug!("Migrated schema from version 3 to version 4");
+        Ok(())
+    }
+
     /// Set is_indexed based on whether session still exists in Kiro.
     fn migrate_archive_indexed_status(&self) -> Result<()> {
         let conn = self.open()?;
@@ -263,13 +280,6 @@ impl KsmDatabase {
     fn migrate_config_to_sparse(&self) -> Result<()> {
         let config_path = crate::config::config_path()?;
         if !config_path.exists() {
-            return Ok(());
-        }
-
-        let content = std::fs::read_to_string(&config_path)?;
-
-        // Check if already migrated (has [index] section or sparse comments)
-        if content.contains("[index]") || content.contains("# auto_clean = ") {
             return Ok(());
         }
 
