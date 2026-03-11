@@ -24,6 +24,7 @@ If you'd like to test the latest changes:
 ```bash
 git clone https://github.com/jabanayt/kiro-session-manager.git
 cd kiro-session-manager
+git checkout staging  # Latest (possibly untested) changes
 cargo build --release
 ```
 
@@ -31,7 +32,19 @@ The binary is at `target/release/ksm`.
 
 ## Code Contributions
 
-Code contributions will be welcomed in future. For now, bug reports and feature requests are the best way to help.
+PRs are welcome. Bug reports and feature requests are often more helpful at this stage. If you do submit code:
+
+1. Branch from `staging`, not `main`
+2. Run `cargo fmt` and `cargo clippy`. Both must pass with no warnings.
+3. Put code in the right layer:
+
+```
+src/
+├── models/    # Data types (no logic)
+├── data/      # Database access (traits + implementations)
+├── services/  # Business logic (no printing/user interaction)
+└── cli/       # Command handlers (parse args, call services, format output)
+```
 
 ## License
 
