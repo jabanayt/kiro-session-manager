@@ -3,124 +3,65 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::load_config;
-use crate::data::{CachedSession, KsmDatabase, SessionSource};
+use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::{Session, SessionMetadata};
+use crate::models::{CachedSession, Session, SessionMetadata};
 use crate::services::{chains, metadata};
 
-/// Result of listing sessions.
-pub struct SessionListResult {
+/// Result of loading session context.
+pub struct SessionContext {
     pub all_sessions: Vec<Session>,
     pub metadata: HashMap<String, SessionMetadata>,
     pub auto_linked: usize,
     /// Session IDs that are indexed (for display markers).
     pub indexed_session_ids: Vec<String>,
+    pub cache: HashMap<String, CachedSession>,
 }
 
-/// Fetch sessions, load metadata, run auto-clean and auto-detect.
-pub fn list_sessions(
+/// Load all session data needed for commands.
+///
+/// Loads cache, builds session list, loads metadata, runs auto-clean
+/// and auto-link if enabled.
+pub fn session_context(
     source: &dyn SessionSource,
     db: &KsmDatabase,
     directory: &str,
-) -> Result<SessionListResult> {
-    // Try cache-accelerated path first
-    let sessions = match load_sessions_with_cache(source, db, directory) {
-        Ok(sessions) => sessions,
-        Err(_) => {
-            // Cache failed, fall back to full fetch
-            source.list_sessions()?
-        }
-    };
+) -> Result<SessionContext> {
+    // Load cache (refreshes stale entries)
+    let cache = crate::services::cache::sessions(source, db, directory)?;
+
+    // Build session list from cache, sorted by updated_at DESC
+    let mut sessions: Vec<Session> = cache.values().map(Session::from).collect();
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
 
+    // Clean stale metadata and cache
     if config.auto_clean && !sessions.is_empty() {
         metadata::clean_stale_metadata(&sessions, &mut meta, db)?;
+
+        let live_ids: HashSet<String> = sessions.iter().map(|s| s.id.clone()).collect();
+        crate::services::cache::clean_stale(db, directory, &live_ids)?;
     }
 
+    // Auto-link using cache
     let auto_linked = if config.auto_detect_continuations && !sessions.is_empty() {
-        chains::auto_link_continuations(&sessions, &mut meta, source, db)?
+        chains::auto_link_continuations(&sessions, &mut meta, &cache, db)?
     } else {
         0
     };
 
-    // Get indexed session IDs for display
     let indexed = db.list_indexed(directory)?;
     let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
 
-    Ok(SessionListResult {
+    Ok(SessionContext {
         all_sessions: sessions,
         metadata: meta,
         auto_linked,
         indexed_session_ids,
+        cache,
     })
-}
-
-/// Load sessions using cache where possible.
-fn load_sessions_with_cache(
-    source: &dyn SessionSource,
-    db: &KsmDatabase,
-    directory: &str,
-) -> Result<Vec<Session>> {
-    // Get lightweight timestamps from kiro db
-    let timestamps = source.list_session_timestamps()?;
-    if timestamps.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Load existing cache
-    let cache = db.get_cached_sessions(directory)?;
-
-    let mut sessions = Vec::with_capacity(timestamps.len());
-    let mut to_cache = Vec::new();
-
-    for (id, created_at, updated_at) in timestamps {
-        // Check cache hit
-        if let Some(cached) = cache.get(&id)
-            && cached.updated_at == updated_at
-        {
-            // Cache hit - use cached data
-            sessions.push(Session {
-                id,
-                created_at: cached.created_at,
-                updated_at: cached.updated_at,
-                preview: cached.preview.clone(),
-                msg_count: cached.msg_count,
-            });
-            continue;
-        }
-
-        // Cache miss or stale - fetch full data
-        let conversation = source.get_conversation(&id)?;
-        let preview = conversation.preview();
-        let msg_count = conversation.history.len() as u32;
-
-        sessions.push(Session {
-            id: id.clone(),
-            created_at,
-            updated_at,
-            preview: preview.clone(),
-            msg_count,
-        });
-
-        // Queue for cache update
-        to_cache.push(CachedSession {
-            session_id: id,
-            directory: directory.to_string(),
-            updated_at,
-            created_at,
-            preview,
-            msg_count,
-        });
-    }
-
-    // Update cache with new/stale entries
-    if !to_cache.is_empty() {
-        db.set_cached_sessions(&to_cache)?;
-    }
-
-    Ok(sessions)
 }
 
 /// Get existing name and tags for a session (for CLI prompts).

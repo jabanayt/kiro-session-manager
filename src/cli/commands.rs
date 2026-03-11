@@ -8,7 +8,7 @@ use crate::cli::pager;
 use crate::cli::styles;
 use crate::data::{HybridSource, KsmDatabase, SessionSource};
 use crate::error::KsmError;
-use crate::services::sessions::SessionListResult;
+use crate::services::sessions::SessionContext;
 use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 // --- Clap definitions ---
@@ -295,7 +295,7 @@ fn cmd_list(
     show_parents: bool,
     directory: &str,
 ) -> Result<()> {
-    let result = sessions::list_sessions(source, db, directory)?;
+    let result = sessions::session_context(source, db, directory)?;
 
     if result.all_sessions.is_empty() {
         println!("No sessions found.");
@@ -331,12 +331,12 @@ fn cmd_name(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -376,12 +376,12 @@ fn cmd_tag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -421,12 +421,12 @@ fn cmd_untag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -463,12 +463,12 @@ fn cmd_untag(
 }
 
 fn cmd_clean_metadata(source: &dyn SessionSource, db: &KsmDatabase, directory: &str) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     let stale = metadata::clean_metadata(&all_sessions, &mut meta, db)?;
 
@@ -509,7 +509,7 @@ fn cmd_resume(
         resume::ResumeTarget::Index(idx)
     } else {
         // Interactive picker
-        let list_result = sessions::list_sessions(source, db, directory)?;
+        let list_result = sessions::session_context(source, db, directory)?;
         if list_result.all_sessions.is_empty() {
             println!("No sessions found.");
             return Ok(());
@@ -586,12 +586,12 @@ fn cmd_link(
     parent_index: usize,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(child_index, all_sessions.len())?;
     sessions::validate_index(parent_index, all_sessions.len())?;
@@ -686,12 +686,12 @@ fn cmd_unlink(
     keep_metadata: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = &all_sessions[index].id;
@@ -736,12 +736,13 @@ fn cmd_detect_links(
     force: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
-        auto_linked: _,
         indexed_session_ids,
-    } = sessions::list_sessions(source, db, directory)?;
+        cache,
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     if all_sessions.is_empty() {
         println!("No sessions found.");
@@ -750,7 +751,7 @@ fn cmd_detect_links(
 
     println!("Scanning for compacted sessions...\n");
 
-    let candidates = chains::detect_unlinked_continuations(&all_sessions, &meta, source, force)?;
+    let candidates = chains::detect_unlinked_continuations(&all_sessions, &meta, &cache, force)?;
 
     if candidates.is_empty() {
         println!("No unlinked compacted sessions found.");
@@ -839,7 +840,7 @@ fn cmd_archive(
     tags_flag: Option<Vec<String>>,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
+    let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -915,7 +916,7 @@ fn cmd_index(
     tags_flag: Option<Vec<String>>,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
+    let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -991,7 +992,7 @@ fn cmd_reindex(
 ) -> Result<()> {
     if let Some(idx) = index {
         // Reindex specific session by list index
-        let list_result = sessions::list_sessions(source, db, directory)?;
+        let list_result = sessions::session_context(source, db, directory)?;
         sessions::validate_index(idx, list_result.all_sessions.len())?;
         let session = &list_result.all_sessions[idx];
 
@@ -1074,7 +1075,7 @@ fn cmd_unindex(
     index: usize,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
+    let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -1101,12 +1102,12 @@ fn cmd_delete(
     skip_confirm: bool,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
-    let SessionListResult {
+    let list_result = sessions::session_context(source, db, directory)?;
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
-        auto_linked: _,
         indexed_session_ids,
+        ..
     } = list_result;
 
     let indices = match indices {

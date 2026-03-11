@@ -6,7 +6,7 @@ mod ksm_database;
 pub use json_store::JsonMetadataStore;
 pub use kiro_cli::KiroCliSource;
 pub use kiro_database::KiroDatabase;
-pub use ksm_database::{CachedSession, KsmDatabase};
+pub use ksm_database::KsmDatabase;
 
 use crate::error::Result;
 use crate::models::{ConversationData, Session};
