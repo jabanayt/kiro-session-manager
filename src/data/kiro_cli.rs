@@ -89,6 +89,12 @@ impl SessionSource for KiroCliSource {
         self.parse_output(&stderr)
     }
 
+    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>> {
+        Err(KsmError::KiroCli(
+            "Session timestamps not available via CLI fallback".to_string(),
+        ))
+    }
+
     fn get_conversation(&self, _session_id: &str) -> Result<ConversationData> {
         Err(KsmError::KiroCli(
             "Conversation data not available via CLI fallback".to_string(),

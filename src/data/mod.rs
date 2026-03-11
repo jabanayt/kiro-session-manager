@@ -6,7 +6,7 @@ mod ksm_database;
 pub use json_store::JsonMetadataStore;
 pub use kiro_cli::KiroCliSource;
 pub use kiro_database::KiroDatabase;
-pub use ksm_database::KsmDatabase;
+pub use ksm_database::{CachedSession, KsmDatabase};
 
 use crate::error::Result;
 use crate::models::{ConversationData, Session};
@@ -17,6 +17,10 @@ use crate::models::{ConversationData, Session};
 pub trait SessionSource {
     /// List all sessions for the current directory, ordered by updated_at DESC.
     fn list_sessions(&self) -> Result<Vec<Session>>;
+
+    /// List session IDs and timestamps only (lightweight, for cache checks).
+    /// Returns (id, created_at, updated_at) tuples.
+    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>>;
 
     /// Get full conversation JSON for a session.
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData>;
@@ -72,6 +76,11 @@ impl SessionSource for HybridSource {
                 self.cli_fallback.list_sessions()
             }
         }
+    }
+
+    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>> {
+        // No fallback - CLI source doesn't support this
+        self.database.list_session_timestamps()
     }
 
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {

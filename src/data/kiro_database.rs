@@ -80,6 +80,27 @@ impl KiroDatabase {
             .exists([session_id])?;
         Ok(exists)
     }
+
+    /// List session IDs and timestamps for the current directory (lightweight, no JSON).
+    pub fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>> {
+        let conn = self.open_readonly()?;
+        let current_dir = std::env::current_dir()?.display().to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, created_at, updated_at
+             FROM conversations_v2
+             WHERE key = ?
+             ORDER BY updated_at DESC",
+        )?;
+
+        let rows = stmt
+            .query_map([&current_dir], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
 }
 
 impl SessionSource for KiroDatabase {
@@ -114,6 +135,10 @@ impl SessionSource for KiroDatabase {
 
         debug!("Loaded {} sessions from database", sessions.len());
         Ok(sessions)
+    }
+
+    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>> {
+        Self::list_session_timestamps(self)
     }
 
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {

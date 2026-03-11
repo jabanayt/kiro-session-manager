@@ -17,6 +17,17 @@ use crate::models::{
 /// State key for pending reindex tracking.
 const STATE_PENDING_REINDEX: &str = "pending_reindex";
 
+/// Cached session data for fast list operations.
+#[derive(Debug, Clone)]
+pub struct CachedSession {
+    pub session_id: String,
+    pub directory: String,
+    pub updated_at: i64,
+    pub created_at: i64,
+    pub preview: String,
+    pub msg_count: u32,
+}
+
 /// Unified database for all KSM data (metadata, archives, state).
 pub struct KsmDatabase {
     path: PathBuf,
@@ -223,8 +234,24 @@ impl KsmDatabase {
         Ok(())
     }
 
-    /// Migrate v3 to v4: re-run config migration for consistency.
+    /// Migrate v3 to v4: add session_cache table, re-run config migration.
     fn migrate_v3_to_v4(&self, conn: &Connection) -> Result<()> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_cache (
+                session_id TEXT PRIMARY KEY,
+                directory TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                preview TEXT NOT NULL,
+                msg_count INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory)",
+            [],
+        )?;
+
         conn.execute("UPDATE schema_version SET version = 4", [])?;
 
         // Re-run config migration (idempotent, catches verbose configs)
@@ -595,6 +622,62 @@ impl KsmDatabase {
     /// Get pending reindex session ID.
     pub fn get_pending_reindex(&self) -> Result<Option<String>> {
         self.get_state(STATE_PENDING_REINDEX)
+    }
+
+    // ========== Session Cache Methods ==========
+
+    /// Get cached sessions for a directory, keyed by session_id.
+    pub fn get_cached_sessions(&self, directory: &str) -> Result<HashMap<String, CachedSession>> {
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT session_id, directory, updated_at, created_at, preview, msg_count
+             FROM session_cache WHERE directory = ?",
+        )?;
+
+        let rows = stmt
+            .query_map([directory], |row| {
+                Ok(CachedSession {
+                    session_id: row.get(0)?,
+                    directory: row.get(1)?,
+                    updated_at: row.get(2)?,
+                    created_at: row.get(3)?,
+                    preview: row.get(4)?,
+                    msg_count: row.get::<_, i64>(5)? as u32,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows
+            .into_iter()
+            .map(|c| (c.session_id.clone(), c))
+            .collect())
+    }
+
+    /// Batch insert/update cached sessions.
+    pub fn set_cached_sessions(&self, sessions: &[CachedSession]) -> Result<()> {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "INSERT OR REPLACE INTO session_cache 
+             (session_id, directory, updated_at, created_at, preview, msg_count)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )?;
+
+        for session in sessions {
+            stmt.execute((
+                &session.session_id,
+                &session.directory,
+                session.updated_at,
+                session.created_at,
+                &session.preview,
+                session.msg_count as i64,
+            ))?;
+        }
+
+        Ok(())
     }
 
     // ========== Archive Methods ==========
