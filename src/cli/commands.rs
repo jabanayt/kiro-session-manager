@@ -88,8 +88,8 @@ pub enum Commands {
     },
     /// Remove index from a session (keeps session in Kiro)
     Unindex {
-        /// Session index (from ksm list) or name
-        target: String,
+        /// Session index (from ksm list)
+        index: usize,
     },
     /// Update search index for indexed sessions
     Reindex {
@@ -258,8 +258,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Reindex { index } => {
             cmd_reindex(&source, &db, index, &directory)?;
         }
-        Commands::Unindex { target } => {
-            cmd_unindex(&source, &db, &target, &directory)?;
+        Commands::Unindex { index } => {
+            cmd_unindex(&source, &db, index, &directory)?;
         }
         Commands::Search {
             query,
@@ -1071,30 +1071,12 @@ fn cmd_reindex(
 fn cmd_unindex(
     source: &dyn SessionSource,
     db: &KsmDatabase,
-    target: &str,
+    index: usize,
     directory: &str,
 ) -> Result<()> {
     let list_result = sessions::list_sessions(source, db, directory)?;
-
-    // Try parsing as index first, otherwise treat as name
-    let session = if let Ok(idx) = target.parse::<usize>() {
-        sessions::validate_index(idx, list_result.all_sessions.len())?;
-        &list_result.all_sessions[idx]
-    } else {
-        // Find by name
-        list_result
-            .all_sessions
-            .iter()
-            .find(|s| {
-                list_result
-                    .metadata
-                    .get(&s.id)
-                    .and_then(|m| m.name.as_ref())
-                    .map(|n| n == target)
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| KsmError::SessionNotFound(target.to_string()))?
-    };
+    sessions::validate_index(index, list_result.all_sessions.len())?;
+    let session = &list_result.all_sessions[index];
 
     match archive::unindex_session(&session.id, db) {
         Ok(result) => {
