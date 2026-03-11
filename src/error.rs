@@ -60,6 +60,9 @@ pub enum KsmError {
     #[error("Search error: {0}")]
     SearchError(String),
 
+    #[error("Internal error (bug): {0}")]
+    Internal(String),
+
     #[error("Schema version mismatch: expected {expected}, found {found}")]
     SchemaVersionMismatch { expected: i64, found: i64 },
 

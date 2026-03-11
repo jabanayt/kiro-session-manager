@@ -51,7 +51,7 @@ pub fn resume(
         ResumeTarget::Last => Ok(ResumeResult::LaunchDirect),
 
         ResumeTarget::Index(index) => {
-            let list_result = sessions::list_sessions(source, db, directory)?;
+            let list_result = sessions::session_context(source, db, directory)?;
             sessions::validate_index(index, list_result.all_sessions.len())?;
             let session = &list_result.all_sessions[index];
             let display_name = list_result
@@ -71,7 +71,7 @@ pub fn resume(
         }
 
         ResumeTarget::Name(name) => {
-            let list_result = sessions::list_sessions(source, db, directory)?;
+            let list_result = sessions::session_context(source, db, directory)?;
             let found = find_by_name(&name, &list_result.all_sessions, &list_result.metadata)?;
 
             set_pending_reindex_if_indexed(&found.session_id, db)?;
@@ -84,7 +84,7 @@ pub fn resume(
         }
 
         ResumeTarget::Tag(tag) => {
-            let list_result = sessions::list_sessions(source, db, directory)?;
+            let list_result = sessions::session_context(source, db, directory)?;
             let matches = find_by_tag(&tag, &list_result.all_sessions, &list_result.metadata);
             match matches.len() {
                 0 => Err(KsmError::SessionNotFound(format!(
