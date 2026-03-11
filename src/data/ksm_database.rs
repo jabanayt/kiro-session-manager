@@ -327,7 +327,13 @@ impl KsmDatabase {
 
         lines.push(String::new());
         lines.push("[index]".to_string());
-        lines.push("# auto_update = true".to_string());
+
+        // auto_update - default is true
+        if !config.index.auto_update {
+            lines.push("auto_update = false".to_string());
+        } else {
+            lines.push("# auto_update = true".to_string());
+        }
 
         std::fs::write(&config_path, lines.join("\n") + "\n")?;
         println!("✓ Migrated config.toml to sparse format");
