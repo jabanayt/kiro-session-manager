@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::load_config;
-use crate::data::{KsmDatabase, SessionSource};
+use crate::data::{CachedSession, KsmDatabase, SessionSource};
 use crate::error::Result;
 use crate::models::{Session, SessionMetadata};
 use crate::services::{chains, metadata};
@@ -23,7 +23,15 @@ pub fn list_sessions(
     db: &KsmDatabase,
     directory: &str,
 ) -> Result<SessionListResult> {
-    let sessions = source.list_sessions()?;
+    // Try cache-accelerated path first
+    let sessions = match load_sessions_with_cache(source, db, directory) {
+        Ok(sessions) => sessions,
+        Err(_) => {
+            // Cache failed, fall back to full fetch
+            source.list_sessions()?
+        }
+    };
+
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
 
@@ -47,6 +55,72 @@ pub fn list_sessions(
         auto_linked,
         indexed_session_ids,
     })
+}
+
+/// Load sessions using cache where possible.
+fn load_sessions_with_cache(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    directory: &str,
+) -> Result<Vec<Session>> {
+    // Get lightweight timestamps from kiro db
+    let timestamps = source.list_session_timestamps()?;
+    if timestamps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Load existing cache
+    let cache = db.get_cached_sessions(directory)?;
+
+    let mut sessions = Vec::with_capacity(timestamps.len());
+    let mut to_cache = Vec::new();
+
+    for (id, created_at, updated_at) in timestamps {
+        // Check cache hit
+        if let Some(cached) = cache.get(&id)
+            && cached.updated_at == updated_at
+        {
+            // Cache hit - use cached data
+            sessions.push(Session {
+                id,
+                created_at: cached.created_at,
+                updated_at: cached.updated_at,
+                preview: cached.preview.clone(),
+                msg_count: cached.msg_count,
+            });
+            continue;
+        }
+
+        // Cache miss or stale - fetch full data
+        let conversation = source.get_conversation(&id)?;
+        let preview = conversation.preview();
+        let msg_count = conversation.history.len() as u32;
+
+        sessions.push(Session {
+            id: id.clone(),
+            created_at,
+            updated_at,
+            preview: preview.clone(),
+            msg_count,
+        });
+
+        // Queue for cache update
+        to_cache.push(CachedSession {
+            session_id: id,
+            directory: directory.to_string(),
+            updated_at,
+            created_at,
+            preview,
+            msg_count,
+        });
+    }
+
+    // Update cache with new/stale entries
+    if !to_cache.is_empty() {
+        db.set_cached_sessions(&to_cache)?;
+    }
+
+    Ok(sessions)
 }
 
 /// Get existing name and tags for a session (for CLI prompts).
