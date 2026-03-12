@@ -201,8 +201,10 @@ pub fn print_session_list(
         let indexed = is_indexed(&session.id, indexed_session_ids);
         let parent_idx = get_parent_index(&session.id, metadata, sessions);
 
-        // Build display name with chain link
-        let display_name = if let Some(pidx) = parent_idx {
+        // Build display name with chain link (only when not showing parent tree)
+        let display_name = if let Some(pidx) = parent_idx
+            && !show_parents
+        {
             let chain = format!(" {}", styles::chain_link(pidx));
             let chain_plain = format!(" ↳ [{}]", pidx);
             let available = NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()));
@@ -212,7 +214,9 @@ pub fn print_session_list(
         };
 
         // Calculate plain width for padding
-        let plain_name = if let Some(pidx) = parent_idx {
+        let plain_name = if let Some(pidx) = parent_idx
+            && !show_parents
+        {
             let chain_plain = format!(" ↳ [{}]", pidx);
             format!(
                 "{}{}",

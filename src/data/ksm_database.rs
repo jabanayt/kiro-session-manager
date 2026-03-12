@@ -5,13 +5,14 @@
 
 use log::debug;
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::config::{Config, load_config, metadata_path};
 use crate::error::{KsmError, Result};
 use crate::models::{
-    Archive, ArchiveStatus, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult, SessionMetadata,
+    Archive, ArchiveStatus, CachedSession, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult,
+    SessionMetadata,
 };
 
 /// State key for pending reindex tracking.
@@ -82,6 +83,7 @@ impl KsmDatabase {
             Self::create_v1_schema(&conn)?;
             Self::migrate_v1_to_v2(&conn)?;
             self.migrate_v2_to_v3(&conn)?;
+            self.migrate_v3_to_v4(&conn)?;
         } else {
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
@@ -91,14 +93,19 @@ impl KsmDatabase {
                 1 => {
                     Self::migrate_v1_to_v2(&conn)?;
                     self.migrate_v2_to_v3(&conn)?;
+                    self.migrate_v3_to_v4(&conn)?;
                 }
                 2 => {
                     self.migrate_v2_to_v3(&conn)?;
+                    self.migrate_v3_to_v4(&conn)?;
                 }
-                3 => {} // Current version
+                3 => {
+                    self.migrate_v3_to_v4(&conn)?;
+                }
+                4 => {} // Current version
                 _ => {
                     return Err(KsmError::SchemaVersionMismatch {
-                        expected: 3,
+                        expected: 4,
                         found: version,
                     });
                 }
@@ -217,6 +224,35 @@ impl KsmDatabase {
         Ok(())
     }
 
+    /// Migrate v3 to v4: add session_cache table, re-run config migration.
+    fn migrate_v3_to_v4(&self, conn: &Connection) -> Result<()> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_cache (
+                session_id TEXT PRIMARY KEY,
+                directory TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                preview TEXT NOT NULL,
+                msg_count INTEGER NOT NULL,
+                has_compact_tag INTEGER NOT NULL DEFAULT 0,
+                message_ids TEXT NOT NULL DEFAULT '[]'
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory)",
+            [],
+        )?;
+
+        conn.execute("UPDATE schema_version SET version = 4", [])?;
+
+        // Re-run config migration (idempotent, catches verbose configs)
+        self.migrate_config_to_sparse()?;
+
+        debug!("Migrated schema from version 3 to version 4");
+        Ok(())
+    }
+
     /// Set is_indexed based on whether session still exists in Kiro.
     fn migrate_archive_indexed_status(&self) -> Result<()> {
         let conn = self.open()?;
@@ -266,13 +302,6 @@ impl KsmDatabase {
             return Ok(());
         }
 
-        let content = std::fs::read_to_string(&config_path)?;
-
-        // Check if already migrated (has [index] section or sparse comments)
-        if content.contains("[index]") || content.contains("# auto_clean = ") {
-            return Ok(());
-        }
-
         let config = load_config()?;
 
         // Build sparse config - only include non-default values
@@ -317,7 +346,13 @@ impl KsmDatabase {
 
         lines.push(String::new());
         lines.push("[index]".to_string());
-        lines.push("# auto_update = true".to_string());
+
+        // auto_update - default is true
+        if !config.index.auto_update {
+            lines.push("auto_update = false".to_string());
+        } else {
+            lines.push("# auto_update = true".to_string());
+        }
 
         std::fs::write(&config_path, lines.join("\n") + "\n")?;
         println!("✓ Migrated config.toml to sparse format");
@@ -579,6 +614,98 @@ impl KsmDatabase {
     /// Get pending reindex session ID.
     pub fn get_pending_reindex(&self) -> Result<Option<String>> {
         self.get_state(STATE_PENDING_REINDEX)
+    }
+
+    // ========== Session Cache Methods ==========
+
+    /// Get cached sessions for a directory, keyed by session_id.
+    pub fn get_cached_sessions(&self, directory: &str) -> Result<HashMap<String, CachedSession>> {
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT session_id, directory, updated_at, created_at, preview, msg_count,
+                    has_compact_tag, message_ids
+             FROM session_cache WHERE directory = ?",
+        )?;
+
+        let mut cache = HashMap::new();
+        let rows = stmt.query_map([directory], |row| {
+            let message_ids_json: String = row.get(7)?;
+            Ok(CachedSession {
+                session_id: row.get(0)?,
+                directory: row.get(1)?,
+                updated_at: row.get(2)?,
+                created_at: row.get(3)?,
+                preview: row.get(4)?,
+                msg_count: row.get::<_, i64>(5)? as u32,
+                has_compact_tag: row.get::<_, i32>(6)? != 0,
+                message_ids: serde_json::from_str(&message_ids_json).unwrap_or_default(),
+            })
+        })?;
+
+        for row in rows {
+            let cached = row?;
+            cache.insert(cached.session_id.clone(), cached);
+        }
+
+        Ok(cache)
+    }
+
+    /// Batch insert/update cached sessions.
+    pub fn set_cached_sessions(&self, sessions: &[CachedSession]) -> Result<()> {
+        if sessions.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "INSERT OR REPLACE INTO session_cache
+             (session_id, directory, updated_at, created_at, preview, msg_count,
+              has_compact_tag, message_ids)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )?;
+
+        for session in sessions {
+            let message_ids_json = serde_json::to_string(&session.message_ids)?;
+            stmt.execute(rusqlite::params![
+                session.session_id,
+                session.directory,
+                session.updated_at,
+                session.created_at,
+                session.preview,
+                session.msg_count as i64,
+                session.has_compact_tag as i32,
+                message_ids_json,
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    /// Delete cache entries for sessions that no longer exist in Kiro.
+    pub fn delete_stale_cache(
+        &self,
+        directory: &str,
+        live_session_ids: &HashSet<String>,
+    ) -> Result<usize> {
+        let conn = self.open()?;
+
+        // Get all cached IDs for this directory
+        let mut stmt = conn.prepare("SELECT session_id FROM session_cache WHERE directory = ?")?;
+        let cached_ids: Vec<String> = stmt
+            .query_map([directory], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Delete those not in live set
+        let mut deleted = 0;
+        for id in cached_ids {
+            if !live_session_ids.contains(&id) {
+                conn.execute("DELETE FROM session_cache WHERE session_id = ?", [&id])?;
+                deleted += 1;
+            }
+        }
+
+        Ok(deleted)
     }
 
     // ========== Archive Methods ==========

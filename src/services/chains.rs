@@ -1,9 +1,9 @@
 use log::debug;
 use std::collections::{HashMap, HashSet};
 
-use crate::data::{KsmDatabase, SessionSource};
+use crate::data::KsmDatabase;
 use crate::error::{KsmError, Result};
-use crate::models::{Session, SessionMetadata};
+use crate::models::{CachedSession, Session, SessionMetadata};
 
 // --- Result types ---
 
@@ -308,10 +308,15 @@ pub fn execute_unlink(
 pub fn find_potential_parents(
     child_id: &str,
     sessions: &[Session],
-    source: &dyn SessionSource,
+    cache: &HashMap<String, CachedSession>,
 ) -> Result<Vec<String>> {
-    let child_msg_ids = source.get_message_ids(child_id)?;
-    let (child_created, _) = source.get_timestamps(child_id)?;
+    let child_cached = cache
+        .get(child_id)
+        .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", child_id)))?;
+
+    let child_msg_ids = &child_cached.message_ids;
+    let child_created = child_cached.created_at;
+
     let mut candidates = Vec::new();
 
     // Primary: message_id overlap
@@ -319,12 +324,16 @@ pub fn find_potential_parents(
         if session.id == child_id {
             continue;
         }
-        let parent_msg_ids = source.get_message_ids(&session.id)?;
-        if child_msg_ids.iter().any(|id| parent_msg_ids.contains(id)) {
-            let (created, _) = source.get_timestamps(&session.id)?;
-            if created < child_created {
-                candidates.push((session.id.clone(), created));
-            }
+        let parent_cached = cache
+            .get(&session.id)
+            .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
+
+        if child_msg_ids
+            .iter()
+            .any(|id| parent_cached.message_ids.contains(id))
+            && parent_cached.created_at < child_created
+        {
+            candidates.push((session.id.clone(), parent_cached.created_at));
         }
     }
 
@@ -338,13 +347,16 @@ pub fn find_potential_parents(
         if session.id == child_id {
             continue;
         }
-        if source.has_compact_tag(&session.id).unwrap_or(false) {
+        let parent_cached = cache
+            .get(&session.id)
+            .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
+
+        if parent_cached.has_compact_tag {
             continue;
         }
-        let (_, parent_updated) = source.get_timestamps(&session.id)?;
-        let time_diff = child_created - parent_updated;
+        let time_diff = child_created - parent_cached.updated_at;
         if time_diff > 0 && time_diff <= 5 * 60 * 1000 {
-            candidates.push((session.id.clone(), parent_updated));
+            candidates.push((session.id.clone(), parent_cached.updated_at));
         }
     }
 
@@ -356,7 +368,7 @@ pub fn find_potential_parents(
 pub fn detect_unlinked_continuations(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
-    source: &dyn SessionSource,
+    cache: &HashMap<String, CachedSession>,
     force: bool,
 ) -> Result<Vec<DetectionCandidate>> {
     let mut candidates = Vec::new();
@@ -372,12 +384,16 @@ pub fn detect_unlinked_continuations(
             }
         }
 
+        let cached = cache
+            .get(&session.id)
+            .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
+
         // Check if this session has Compact tag
-        if !source.has_compact_tag(&session.id)? {
+        if !cached.has_compact_tag {
             continue;
         }
 
-        let parent_candidates = find_potential_parents(&session.id, sessions, source)?;
+        let parent_candidates = find_potential_parents(&session.id, sessions, cache)?;
         if parent_candidates.is_empty() {
             continue;
         }
@@ -406,10 +422,10 @@ pub fn detect_unlinked_continuations(
 pub fn auto_link_continuations(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    source: &dyn SessionSource,
+    cache: &HashMap<String, CachedSession>,
     db: &KsmDatabase,
 ) -> Result<usize> {
-    let candidates = detect_unlinked_continuations(sessions, metadata, source, false)?;
+    let candidates = detect_unlinked_continuations(sessions, metadata, cache, false)?;
     if candidates.is_empty() {
         return Ok(0);
     }

@@ -80,6 +80,43 @@ impl KiroDatabase {
             .exists([session_id])?;
         Ok(exists)
     }
+
+    /// List session IDs with updated_at for cache validation (index-only scan).
+    pub fn list_session_updates(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.open_readonly()?;
+        let current_dir = std::env::current_dir()?.display().to_string();
+
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, updated_at
+             FROM conversations_v2
+             WHERE key = ?
+             ORDER BY updated_at DESC",
+        )?;
+
+        let rows = stmt
+            .query_map([&current_dir], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// Get conversation data and created_at timestamp in one query.
+    pub fn get_conversation_with_created_at(
+        &self,
+        session_id: &str,
+    ) -> Result<(ConversationData, i64)> {
+        let conn = self.open_readonly()?;
+        let (value_json, created_at): (String, i64) = conn
+            .query_row(
+                "SELECT value, created_at FROM conversations_v2 WHERE conversation_id = ?",
+                [session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
+
+        let data: ConversationData = serde_json::from_str(&value_json)?;
+        Ok((data, created_at))
+    }
 }
 
 impl SessionSource for KiroDatabase {
@@ -116,6 +153,10 @@ impl SessionSource for KiroDatabase {
         Ok(sessions)
     }
 
+    fn list_session_updates(&self) -> Result<Vec<(String, i64)>> {
+        Self::list_session_updates(self)
+    }
+
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
         let conn = self.open_readonly()?;
         let value_json: String = conn
@@ -128,6 +169,13 @@ impl SessionSource for KiroDatabase {
 
         let data: ConversationData = serde_json::from_str(&value_json)?;
         Ok(data)
+    }
+
+    fn get_conversation_with_created_at(
+        &self,
+        session_id: &str,
+    ) -> Result<(ConversationData, i64)> {
+        Self::get_conversation_with_created_at(self, session_id)
     }
 
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {

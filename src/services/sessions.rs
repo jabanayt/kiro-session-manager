@@ -5,47 +5,62 @@ use std::collections::{HashMap, HashSet};
 use crate::config::load_config;
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::{Session, SessionMetadata};
+use crate::models::{CachedSession, Session, SessionMetadata};
 use crate::services::{chains, metadata};
 
-/// Result of listing sessions.
-pub struct SessionListResult {
+/// Result of loading session context.
+pub struct SessionContext {
     pub all_sessions: Vec<Session>,
     pub metadata: HashMap<String, SessionMetadata>,
     pub auto_linked: usize,
     /// Session IDs that are indexed (for display markers).
     pub indexed_session_ids: Vec<String>,
+    pub cache: HashMap<String, CachedSession>,
 }
 
-/// Fetch sessions, load metadata, run auto-clean and auto-detect.
-pub fn list_sessions(
+/// Load all session data needed for commands.
+///
+/// Loads cache, builds session list, loads metadata, runs auto-clean
+/// and auto-link if enabled.
+pub fn session_context(
     source: &dyn SessionSource,
     db: &KsmDatabase,
     directory: &str,
-) -> Result<SessionListResult> {
-    let sessions = source.list_sessions()?;
+) -> Result<SessionContext> {
+    // Load cache (refreshes stale entries)
+    let cache = crate::services::cache::sessions(source, db, directory)?;
+
+    // Build session list from cache, sorted by updated_at DESC
+    let mut sessions: Vec<Session> = cache.values().map(Session::from).collect();
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;
 
+    // Clean stale metadata and cache
     if config.auto_clean && !sessions.is_empty() {
         metadata::clean_stale_metadata(&sessions, &mut meta, db)?;
+
+        let live_ids: HashSet<String> = sessions.iter().map(|s| s.id.clone()).collect();
+        crate::services::cache::clean_stale(db, directory, &live_ids)?;
     }
 
+    // Auto-link using cache
     let auto_linked = if config.auto_detect_continuations && !sessions.is_empty() {
-        chains::auto_link_continuations(&sessions, &mut meta, source, db)?
+        chains::auto_link_continuations(&sessions, &mut meta, &cache, db)?
     } else {
         0
     };
 
-    // Get indexed session IDs for display
     let indexed = db.list_indexed(directory)?;
     let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
 
-    Ok(SessionListResult {
+    Ok(SessionContext {
         all_sessions: sessions,
         metadata: meta,
         auto_linked,
         indexed_session_ids,
+        cache,
     })
 }
 

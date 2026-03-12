@@ -8,7 +8,7 @@ use crate::cli::pager;
 use crate::cli::styles;
 use crate::data::{HybridSource, KsmDatabase, SessionSource};
 use crate::error::KsmError;
-use crate::services::sessions::SessionListResult;
+use crate::services::sessions::SessionContext;
 use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
 // --- Clap definitions ---
@@ -88,8 +88,8 @@ pub enum Commands {
     },
     /// Remove index from a session (keeps session in Kiro)
     Unindex {
-        /// Session index (from ksm list) or name
-        target: String,
+        /// Session index (from ksm list)
+        index: usize,
     },
     /// Update search index for indexed sessions
     Reindex {
@@ -258,8 +258,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Commands::Reindex { index } => {
             cmd_reindex(&source, &db, index, &directory)?;
         }
-        Commands::Unindex { target } => {
-            cmd_unindex(&source, &db, &target, &directory)?;
+        Commands::Unindex { index } => {
+            cmd_unindex(&source, &db, index, &directory)?;
         }
         Commands::Search {
             query,
@@ -295,7 +295,7 @@ fn cmd_list(
     show_parents: bool,
     directory: &str,
 ) -> Result<()> {
-    let result = sessions::list_sessions(source, db, directory)?;
+    let result = sessions::session_context(source, db, directory)?;
 
     if result.all_sessions.is_empty() {
         println!("No sessions found.");
@@ -331,12 +331,12 @@ fn cmd_name(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -376,12 +376,12 @@ fn cmd_tag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -421,12 +421,12 @@ fn cmd_untag(
     apply_to_chain: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
@@ -463,12 +463,12 @@ fn cmd_untag(
 }
 
 fn cmd_clean_metadata(source: &dyn SessionSource, db: &KsmDatabase, directory: &str) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     let stale = metadata::clean_metadata(&all_sessions, &mut meta, db)?;
 
@@ -509,7 +509,7 @@ fn cmd_resume(
         resume::ResumeTarget::Index(idx)
     } else {
         // Interactive picker
-        let list_result = sessions::list_sessions(source, db, directory)?;
+        let list_result = sessions::session_context(source, db, directory)?;
         if list_result.all_sessions.is_empty() {
             println!("No sessions found.");
             return Ok(());
@@ -586,12 +586,12 @@ fn cmd_link(
     parent_index: usize,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(child_index, all_sessions.len())?;
     sessions::validate_index(parent_index, all_sessions.len())?;
@@ -686,12 +686,12 @@ fn cmd_unlink(
     keep_metadata: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
         auto_linked: _,
-        indexed_session_ids: _,
-    } = sessions::list_sessions(source, db, directory)?;
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = &all_sessions[index].id;
@@ -736,12 +736,13 @@ fn cmd_detect_links(
     force: bool,
     directory: &str,
 ) -> Result<()> {
-    let SessionListResult {
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
-        auto_linked: _,
         indexed_session_ids,
-    } = sessions::list_sessions(source, db, directory)?;
+        cache,
+        ..
+    } = sessions::session_context(source, db, directory)?;
 
     if all_sessions.is_empty() {
         println!("No sessions found.");
@@ -750,7 +751,7 @@ fn cmd_detect_links(
 
     println!("Scanning for compacted sessions...\n");
 
-    let candidates = chains::detect_unlinked_continuations(&all_sessions, &meta, source, force)?;
+    let candidates = chains::detect_unlinked_continuations(&all_sessions, &meta, &cache, force)?;
 
     if candidates.is_empty() {
         println!("No unlinked compacted sessions found.");
@@ -839,7 +840,7 @@ fn cmd_archive(
     tags_flag: Option<Vec<String>>,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
+    let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -915,7 +916,7 @@ fn cmd_index(
     tags_flag: Option<Vec<String>>,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
+    let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
@@ -991,13 +992,13 @@ fn cmd_reindex(
 ) -> Result<()> {
     if let Some(idx) = index {
         // Reindex specific session by list index
-        let list_result = sessions::list_sessions(source, db, directory)?;
+        let list_result = sessions::session_context(source, db, directory)?;
         sessions::validate_index(idx, list_result.all_sessions.len())?;
         let session = &list_result.all_sessions[idx];
 
         let result = match archive::reindex_session(&session.id, source, db) {
             Ok(r) => r,
-            Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
+            Err(KsmError::NotIndexed(_)) => {
                 println!(
                     "Session [{}] is not indexed. Use 'ksm index {}' to index it.",
                     idx, idx
@@ -1071,30 +1072,12 @@ fn cmd_reindex(
 fn cmd_unindex(
     source: &dyn SessionSource,
     db: &KsmDatabase,
-    target: &str,
+    index: usize,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
-
-    // Try parsing as index first, otherwise treat as name
-    let session = if let Ok(idx) = target.parse::<usize>() {
-        sessions::validate_index(idx, list_result.all_sessions.len())?;
-        &list_result.all_sessions[idx]
-    } else {
-        // Find by name
-        list_result
-            .all_sessions
-            .iter()
-            .find(|s| {
-                list_result
-                    .metadata
-                    .get(&s.id)
-                    .and_then(|m| m.name.as_ref())
-                    .map(|n| n == target)
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| KsmError::SessionNotFound(target.to_string()))?
-    };
+    let list_result = sessions::session_context(source, db, directory)?;
+    sessions::validate_index(index, list_result.all_sessions.len())?;
+    let session = &list_result.all_sessions[index];
 
     match archive::unindex_session(&session.id, db) {
         Ok(result) => {
@@ -1103,7 +1086,7 @@ fn cmd_unindex(
                 styles::success(&format!("Removed index for '{}'", result.name))
             );
         }
-        Err(KsmError::InvalidInput(msg)) if msg.contains("not indexed") => {
+        Err(KsmError::NotIndexed(_)) => {
             println!("Session is not indexed.");
         }
         Err(e) => return Err(e.into()),
@@ -1119,12 +1102,12 @@ fn cmd_delete(
     skip_confirm: bool,
     directory: &str,
 ) -> Result<()> {
-    let list_result = sessions::list_sessions(source, db, directory)?;
-    let SessionListResult {
+    let list_result = sessions::session_context(source, db, directory)?;
+    let SessionContext {
         all_sessions,
         metadata: mut meta,
-        auto_linked: _,
         indexed_session_ids,
+        ..
     } = list_result;
 
     let indices = match indices {
@@ -1390,9 +1373,7 @@ fn cmd_show_archive(
     let result = archive::show_archive(&archive_name, directory, db)?;
 
     if result.chunks.is_empty() {
-        return Err(
-            KsmError::InvalidInput(format!("Archive '{}' has no content.", archive_name)).into(),
-        );
+        return Err(KsmError::EmptyArchive(archive_name).into());
     }
 
     let output = if let Some(n) = exchange {
@@ -1400,15 +1381,22 @@ fn cmd_show_archive(
             .chunks
             .iter()
             .find(|c| c.exchange_index == n)
-            .ok_or_else(|| {
-                KsmError::InvalidInput(format!(
+            .ok_or_else(|| KsmError::ExchangeNotFound {
+                index: n,
+                archive: archive_name.clone(),
+            });
+        match chunk {
+            Ok(c) => display::format_single_exchange(&result.archive, c),
+            Err(KsmError::ExchangeNotFound { index, .. }) => {
+                return Err(anyhow::anyhow!(
                     "Exchange {} not found. Archive has {} exchanges (0 to {}).",
-                    n,
+                    index,
                     result.chunks.len(),
                     result.chunks.len() - 1
-                ))
-            })?;
-        display::format_single_exchange(&result.archive, chunk)
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        }
     } else {
         display::format_full_archive(&result.archive, &result.chunks)
     };

@@ -233,7 +233,6 @@ Indexed sessions show `[i]` in `ksm list`.
 
 ```bash
 ksm unindex <index>
-ksm unindex "session-name"
 ```
 
 Removes the search index. The session remains in Kiro.
