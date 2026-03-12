@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-03-12
+
+### Added
+
+- Session caching for improved performance
+
+### Changed
+
+- unindex command now accepts index only, not session name
+
+### Fixed
+
+- Chain detection slow on large session lists
+- auto_update setting now preserved during config migration
+- ksm list slow on cold/warm start
+- Slow startup on cold disk cache (1.5s to 50ms)
+- Redundant chain indicator with --show-parents
+
 ## [0.2.4] - 2026-03-09
 
 ### Added
