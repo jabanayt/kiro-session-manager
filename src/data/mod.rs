@@ -18,12 +18,17 @@ pub trait SessionSource {
     /// List all sessions for the current directory, ordered by updated_at DESC.
     fn list_sessions(&self) -> Result<Vec<Session>>;
 
-    /// List session IDs and timestamps only (lightweight, for cache checks).
-    /// Returns (id, created_at, updated_at) tuples.
-    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>>;
+    /// List session IDs with updated_at for cache validation.
+    /// Returns (id, updated_at) tuples. Uses index-only scan.
+    fn list_session_updates(&self) -> Result<Vec<(String, i64)>>;
 
     /// Get full conversation JSON for a session.
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData>;
+
+    /// Get conversation data and created_at timestamp in one query.
+    /// Used by cache service on cache miss.
+    fn get_conversation_with_created_at(&self, session_id: &str)
+    -> Result<(ConversationData, i64)>;
 
     /// Extract message IDs from a session's history.
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>>;
@@ -78,15 +83,23 @@ impl SessionSource for HybridSource {
         }
     }
 
-    fn list_session_timestamps(&self) -> Result<Vec<(String, i64, i64)>> {
+    fn list_session_updates(&self) -> Result<Vec<(String, i64)>> {
         // No fallback - CLI source doesn't support this
-        self.database.list_session_timestamps()
+        self.database.list_session_updates()
     }
 
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
         self.database
             .get_conversation(session_id)
             .or_else(|_| self.cli_fallback.get_conversation(session_id))
+    }
+
+    fn get_conversation_with_created_at(
+        &self,
+        session_id: &str,
+    ) -> Result<(ConversationData, i64)> {
+        // No fallback - CLI source doesn't support this
+        self.database.get_conversation_with_created_at(session_id)
     }
 
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
