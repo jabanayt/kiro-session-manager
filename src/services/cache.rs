@@ -21,13 +21,13 @@ pub fn sessions(
 ) -> Result<HashMap<String, CachedSession>> {
     debug!("Loading session cache for directory: {}", directory);
 
-    // 1. Get timestamps from Kiro DB (cheap query)
-    let timestamps = source.list_session_timestamps()?;
-    if timestamps.is_empty() {
+    // 1. Get updated_at from Kiro DB (index-only scan, fast)
+    let updates = source.list_session_updates()?;
+    if updates.is_empty() {
         debug!("No sessions found in Kiro DB");
         return Ok(HashMap::new());
     }
-    debug!("Found {} sessions in Kiro DB", timestamps.len());
+    debug!("Found {} sessions in Kiro DB", updates.len());
 
     // 2. Load existing cache from ksm.db
     let mut cache = db.get_cached_sessions(directory)?;
@@ -38,7 +38,7 @@ pub fn sessions(
     let mut hits = 0;
     let mut misses = 0;
 
-    for (session_id, created_at, updated_at) in &timestamps {
+    for (session_id, updated_at) in &updates {
         if let Some(cached) = cache.get(session_id)
             && cached.updated_at == *updated_at
         {
@@ -46,11 +46,11 @@ pub fn sessions(
             continue; // Cache hit
         }
 
-        // Cache miss or stale - fetch full data
+        // Cache miss or stale - fetch full data including created_at
         misses += 1;
         debug!("Cache miss: session {} (fetching from Kiro)", session_id);
 
-        let conversation = source.get_conversation(session_id)?;
+        let (conversation, created_at) = source.get_conversation_with_created_at(session_id)?;
         let preview = conversation.preview();
         let msg_count = conversation.history.len() as u32;
         let has_compact_tag = extract_has_compact_tag(&conversation);
@@ -60,7 +60,7 @@ pub fn sessions(
             session_id: session_id.clone(),
             directory: directory.to_string(),
             updated_at: *updated_at,
-            created_at: *created_at,
+            created_at,
             preview,
             msg_count,
             has_compact_tag,
@@ -80,7 +80,7 @@ pub fn sessions(
     }
 
     // 5. Filter to only sessions that exist in Kiro
-    let live_ids: HashSet<_> = timestamps.iter().map(|(id, _, _)| id.clone()).collect();
+    let live_ids: HashSet<_> = updates.iter().map(|(id, _)| id.clone()).collect();
     cache.retain(|id, _| live_ids.contains(id));
 
     Ok(cache)
