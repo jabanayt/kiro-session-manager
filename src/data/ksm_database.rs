@@ -84,6 +84,7 @@ impl KsmDatabase {
             Self::migrate_v1_to_v2(&conn)?;
             self.migrate_v2_to_v3(&conn)?;
             self.migrate_v3_to_v4(&conn)?;
+            self.migrate_v4_to_v5(&conn)?;
         } else {
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
@@ -94,18 +95,24 @@ impl KsmDatabase {
                     Self::migrate_v1_to_v2(&conn)?;
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
+                    self.migrate_v4_to_v5(&conn)?;
                 }
                 2 => {
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
+                    self.migrate_v4_to_v5(&conn)?;
                 }
                 3 => {
                     self.migrate_v3_to_v4(&conn)?;
+                    self.migrate_v4_to_v5(&conn)?;
                 }
-                4 => {} // Current version
+                4 => {
+                    self.migrate_v4_to_v5(&conn)?;
+                }
+                5 => {} // Current version
                 _ => {
                     return Err(KsmError::SchemaVersionMismatch {
-                        expected: 4,
+                        expected: 5,
                         found: version,
                     });
                 }
@@ -226,7 +233,9 @@ impl KsmDatabase {
 
     /// Migrate v3 to v4: add session_cache table, re-run config migration.
     fn migrate_v3_to_v4(&self, conn: &Connection) -> Result<()> {
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute(
             "CREATE TABLE IF NOT EXISTS session_cache (
                 session_id TEXT PRIMARY KEY,
                 directory TEXT NOT NULL,
@@ -239,17 +248,78 @@ impl KsmDatabase {
             )",
             [],
         )?;
-        conn.execute(
+        tx.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory)",
             [],
         )?;
 
-        conn.execute("UPDATE schema_version SET version = 4", [])?;
+        tx.execute("UPDATE schema_version SET version = 4", [])?;
+        tx.commit()?;
 
         // Re-run config migration (idempotent, catches verbose configs)
         self.migrate_config_to_sparse()?;
 
         debug!("Migrated schema from version 3 to version 4");
+        Ok(())
+    }
+
+    fn migrate_v4_to_v5(&self, conn: &Connection) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+
+        // Clean up malformed tags in metadata table
+        let rows: Vec<(String, String)> = {
+            let mut stmt = tx.prepare("SELECT session_id, tags FROM metadata WHERE tags != ''")?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+
+        for (session_id, tags_json) in rows {
+            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&tags_json) {
+                let cleaned: Vec<String> = tags
+                    .iter()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                if cleaned != tags {
+                    let new_json = serde_json::to_string(&cleaned)?;
+                    tx.execute(
+                        "UPDATE metadata SET tags = ?1 WHERE session_id = ?2",
+                        rusqlite::params![new_json, session_id],
+                    )?;
+                }
+            }
+        }
+
+        // Clean up malformed tags in archives table (same format)
+        let rows: Vec<(i64, String)> = {
+            let mut stmt =
+                tx.prepare("SELECT id, tags FROM archives WHERE tags != '' AND tags IS NOT NULL")?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+
+        for (archive_id, tags_json) in rows {
+            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&tags_json) {
+                let cleaned: Vec<String> = tags
+                    .iter()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                if cleaned != tags {
+                    let new_json = serde_json::to_string(&cleaned)?;
+                    tx.execute(
+                        "UPDATE archives SET tags = ?1 WHERE id = ?2",
+                        rusqlite::params![new_json, archive_id],
+                    )?;
+                }
+            }
+        }
+
+        tx.execute("UPDATE schema_version SET version = 5", [])?;
+        tx.commit()?;
+        debug!("Migrated schema from version 4 to version 5");
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use crate::config::load_config;
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
 use crate::models::{CachedSession, Session, SessionMetadata};
+use crate::services::metadata::validate_tag;
 use crate::services::{chains, metadata};
 
 /// Result of loading session context.
@@ -16,6 +17,8 @@ pub struct SessionContext {
     /// Session IDs that are indexed (for display markers).
     pub indexed_session_ids: Vec<String>,
     pub cache: HashMap<String, CachedSession>,
+    /// Tags that fail validation, as (session_index, tag_name) pairs.
+    pub invalid_tag_warnings: Vec<(usize, String)>,
 }
 
 /// Load all session data needed for commands.
@@ -55,12 +58,26 @@ pub fn session_context(
     let indexed = db.list_indexed(directory)?;
     let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
 
+    let invalid_tag_warnings: Vec<(usize, String)> = sessions
+        .iter()
+        .enumerate()
+        .flat_map(|(idx, session)| {
+            meta.get(&session.id).into_iter().flat_map(move |m| {
+                m.tags
+                    .iter()
+                    .filter(|t| validate_tag(t).is_err())
+                    .map(move |t| (idx, t.clone()))
+            })
+        })
+        .collect();
+
     Ok(SessionContext {
         all_sessions: sessions,
         metadata: meta,
         auto_linked,
         indexed_session_ids,
         cache,
+        invalid_tag_warnings,
     })
 }
 

@@ -11,6 +11,7 @@ use crate::models::{
     DeleteArchiveResult, NewArchive, NewChunk, SearchQuery, SearchResult, ShowArchiveResult,
     ToolCall, ToolResultContent, UserContent,
 };
+use crate::services::metadata::validate_tags;
 
 // --- Archive operation ---
 
@@ -24,6 +25,7 @@ pub fn archive_session(
     source: &dyn SessionSource,
     db: &KsmDatabase,
 ) -> Result<ArchiveResult> {
+    let tags = validate_tags(&tags)?;
     // Check if already indexed - if so, convert to archive
     if let Some(status) = db.get_archive_status(session_id)? {
         match status {
@@ -217,6 +219,7 @@ pub fn index_session(
     source: &dyn SessionSource,
     db: &KsmDatabase,
 ) -> Result<ArchiveResult> {
+    let tags = validate_tags(&tags)?;
     // Check if already indexed/archived
     if let Some(status) = db.get_archive_status(session_id)? {
         let existing_name = match status {

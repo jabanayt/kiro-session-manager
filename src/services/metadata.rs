@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::data::KsmDatabase;
-use crate::error::Result;
+use crate::error::{KsmError, Result};
 use crate::models::{Session, SessionMetadata};
 use crate::services::chains;
 
@@ -43,6 +43,33 @@ fn resolve_scope(
     }
 }
 
+/// Validate a single tag name. Returns the normalised (lowercased) tag or an error.
+pub fn validate_tag(tag: &str) -> Result<String> {
+    let tag = tag.trim().to_lowercase();
+    if tag.is_empty() {
+        return Err(KsmError::InvalidTag("Tag cannot be empty".into()));
+    }
+    if tag.len() > 50 {
+        return Err(KsmError::InvalidTag(
+            "Tag cannot exceed 50 characters".into(),
+        ));
+    }
+    if !tag
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(KsmError::InvalidTag(
+            "Tags can only contain lowercase letters, numbers, hyphens, and underscores".into(),
+        ));
+    }
+    Ok(tag)
+}
+
+/// Validate and normalise a vec of tags.
+pub fn validate_tags(tags: &[String]) -> Result<Vec<String>> {
+    tags.iter().map(|t| validate_tag(t)).collect()
+}
+
 /// Set name on a session or chain.
 pub fn set_name(
     scope: MetadataScope,
@@ -74,13 +101,14 @@ pub fn add_tags(
     metadata: &mut HashMap<String, SessionMetadata>,
     db: &KsmDatabase,
 ) -> Result<MetadataUpdateResult> {
+    let validated = validate_tags(tags)?;
     let target_ids = resolve_scope(&scope, metadata, sessions);
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
 
     for session_id in &target_ids {
         let entry = metadata.entry(session_id.clone()).or_default();
         entry.directory = Some(current_dir.clone());
-        for tag in tags {
+        for tag in &validated {
             entry.tags.insert(tag.clone());
         }
         db.set_metadata(session_id, entry)?;
@@ -102,19 +130,46 @@ pub fn remove_tags(
     let target_ids = resolve_scope(&scope, metadata, sessions);
     let current_dir = std::env::current_dir()?.to_string_lossy().to_string();
 
-    for session_id in &target_ids {
-        if let Some(entry) = metadata.get_mut(session_id) {
-            entry.directory = Some(current_dir.clone());
-            for tag in tags {
-                entry.tags.remove(tag);
-            }
-            db.set_metadata(session_id, entry)?;
+    // Verify tags can be found before removing anything
+    // Single scope with no metadata is caught here (found = false)
+    for tag in tags {
+        let found = target_ids.iter().any(|id| {
+            metadata
+                .get(id)
+                .is_some_and(|entry| entry.tags.contains(tag))
+        });
+        if !found {
+            let scope_desc = if target_ids.len() == 1 {
+                "on session".to_string()
+            } else {
+                format!("on any session in chain ({} sessions)", target_ids.len())
+            };
+            return Err(KsmError::TagNotFound(format!(
+                "\"{}\" not found {}",
+                tag, scope_desc
+            )));
         }
     }
 
-    Ok(MetadataUpdateResult {
-        affected_ids: target_ids,
-    })
+    // Remove tags, tracking which sessions were actually modified
+    let mut affected_ids = Vec::new();
+    for session_id in &target_ids {
+        if let Some(entry) = metadata.get_mut(session_id) {
+            let mut modified = false;
+            for tag in tags {
+                if entry.tags.remove(tag) {
+                    modified = true;
+                }
+            }
+            if modified {
+                entry.directory = Some(current_dir.clone());
+                db.set_metadata(session_id, entry)?;
+                affected_ids.push(session_id.clone());
+            }
+        }
+    }
+
+    Ok(MetadataUpdateResult { affected_ids })
 }
 
 /// Auto-clean stale metadata entries and migrate legacy entries.

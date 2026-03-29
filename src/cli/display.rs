@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
+use crate::cli::pager;
 use crate::cli::styles;
 use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata};
 
@@ -185,13 +186,18 @@ pub fn print_session_list(
         return;
     }
 
-    const NAME_WIDTH: usize = 35;
     const TIME_WIDTH: usize = 8;
     const MSG_WIDTH: usize = 9;
 
     // Calculate index column width based on largest index
     let max_idx = visible_indices.iter().max().unwrap_or(&0);
     let idx_width = format!("[{}]", max_idx).len();
+
+    // Dynamic name width based on terminal width
+    // Fixed columns: indexed marker (5) + spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 28
+    let name_width = pager::terminal_size()
+        .map(|(w, _)| w.saturating_sub(idx_width).saturating_sub(28).max(20))
+        .unwrap_or(35);
 
     println!();
     for &idx in visible_indices {
@@ -207,10 +213,10 @@ pub fn print_session_list(
         {
             let chain = format!(" {}", styles::chain_link(pidx));
             let chain_plain = format!(" ↳ [{}]", pidx);
-            let available = NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()));
+            let available = name_width.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()));
             format!("{}{}", truncate_to_width(&name, available), chain)
         } else {
-            truncate_to_width(&name, NAME_WIDTH)
+            truncate_to_width(&name, name_width)
         };
 
         // Calculate plain width for padding
@@ -222,17 +228,17 @@ pub fn print_session_list(
                 "{}{}",
                 truncate_to_width(
                     &name,
-                    NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))
+                    name_width.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))
                 ),
                 chain_plain
             )
         } else {
-            truncate_to_width(&name, NAME_WIDTH)
+            truncate_to_width(&name, name_width)
         };
         let name_padded = format!(
             "{}{}",
             display_name,
-            " ".repeat(NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(plain_name.as_str())))
+            " ".repeat(name_width.saturating_sub(UnicodeWidthStr::width(plain_name.as_str())))
         );
 
         let time_str = format_time_compact(session.updated_at);
@@ -323,9 +329,18 @@ pub fn print_archive_list(archives: &[Archive]) {
         return;
     }
 
-    const NAME_WIDTH: usize = 35;
     const TIME_WIDTH: usize = 8;
     const MSG_WIDTH: usize = 9;
+
+    // Calculate index column width based on largest index
+    let max_idx = archives.len().saturating_sub(1);
+    let idx_width = format!("[{}]", max_idx).len();
+
+    // Dynamic name width based on terminal width
+    // Fixed columns: spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 23
+    let name_width = pager::terminal_size()
+        .map(|(w, _)| w.saturating_sub(idx_width).saturating_sub(23).max(20))
+        .unwrap_or(35);
 
     println!();
     for (idx, archive) in archives.iter().enumerate() {
@@ -342,13 +357,13 @@ pub fn print_archive_list(archives: &[Archive]) {
             archive.name.clone()
         };
 
-        let name_truncated = truncate_to_width(&name_with_pruned, NAME_WIDTH);
-        let name_plain_truncated = truncate_to_width(&name_plain, NAME_WIDTH);
+        let name_truncated = truncate_to_width(&name_with_pruned, name_width);
+        let name_plain_truncated = truncate_to_width(&name_plain, name_width);
         let name_padded = format!(
             "{}{}",
             name_truncated,
             " ".repeat(
-                NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str()))
+                name_width.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str()))
             )
         );
 
