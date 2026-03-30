@@ -324,10 +324,7 @@ fn cmd_list(
                 styles::tags(std::slice::from_ref(tag))
             ));
         }
-        lines.push(
-            styles::bold("Tags must be lowercase a-z, 0-9, hyphens, and underscores only.")
-                .to_string(),
-        );
+        lines.push(styles::bold(metadata::TAG_RULES).to_string());
         lines.push(format!(
             "Remove with: {}",
             styles::hint("ksm untag <index> \"tag\"")
@@ -901,7 +898,7 @@ fn cmd_archive(
             for tag in &invalid {
                 eprintln!("  {}", styles::tags(&[(*tag).clone()]));
             }
-            eprintln!("Tags must be lowercase a-z, 0-9, hyphens, and underscores only.");
+            eprintln!("{}", metadata::TAG_RULES);
             eprintln!(
                 "Remove with: {}",
                 styles::hint(&format!("ksm untag {} \"tag\"", index))
@@ -1001,7 +998,7 @@ fn cmd_index(
             for tag in &invalid {
                 eprintln!("  {}", styles::tags(&[(*tag).clone()]));
             }
-            eprintln!("Tags must be lowercase a-z, 0-9, hyphens, and underscores only.");
+            eprintln!("{}", metadata::TAG_RULES);
             eprintln!(
                 "Remove with: {}",
                 styles::hint(&format!("ksm untag {} \"tag\"", index))

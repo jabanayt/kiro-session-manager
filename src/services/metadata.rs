@@ -43,6 +43,9 @@ fn resolve_scope(
     }
 }
 
+/// Human-readable description of tag format rules.
+pub const TAG_RULES: &str = "Tags must be lowercase a-z, 0-9, hyphens, underscores, and dots only.";
+
 /// Validate a single tag name. Returns the normalised (lowercased) tag or an error.
 pub fn validate_tag(tag: &str) -> Result<String> {
     let tag = tag.trim().to_lowercase();
@@ -56,10 +59,11 @@ pub fn validate_tag(tag: &str) -> Result<String> {
     }
     if !tag
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
         return Err(KsmError::InvalidTag(
-            "Tags can only contain lowercase letters, numbers, hyphens, and underscores".into(),
+            "Tags can only contain lowercase letters, numbers, hyphens, underscores, and dots"
+                .into(),
         ));
     }
     Ok(tag)
