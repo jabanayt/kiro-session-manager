@@ -58,6 +58,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.notes.outputs.body }}
+          draft: true
           prerelease: ${{ startsWith(steps.version.outputs.version, '0.') }}
           files: |
             ksm-linux-x86_64.tar.gz
