@@ -84,8 +84,8 @@ fn level_colour(level: &NoticeLevel) -> &'static str {
 fn level_symbol(level: &NoticeLevel) -> &'static str {
     match level {
         NoticeLevel::Success => "✓",
-        NoticeLevel::Info => "ℹ",
-        NoticeLevel::Warning => "⚠",
+        NoticeLevel::Info => "i",
+        NoticeLevel::Warning => "!",
         NoticeLevel::Error => "✗",
     }
 }
@@ -102,10 +102,10 @@ pub fn render_notices(notices: &[Notice]) -> String {
     // Calculate max content width across all notices (strip ANSI for measurement)
     let mut max_width: usize = 0;
     for notice in notices {
-        let header_plain = format!("{} {}", level_symbol(&notice.level), &notice.header);
+        let header_plain = format!("{}   {}", level_symbol(&notice.level), &notice.header);
         max_width = max_width.max(UnicodeWidthStr::width(header_plain.as_str()));
         for line in &notice.lines {
-            let line_plain = format!("  {}", strip_ansi(line));
+            let line_plain = format!("    {}", strip_ansi(line));
             max_width = max_width.max(UnicodeWidthStr::width(line_plain.as_str()));
         }
     }
@@ -134,11 +134,11 @@ pub fn render_notices(notices: &[Notice]) -> String {
             ));
         }
 
-        // Header line (padded to max_width)
-        let header_plain = format!("{} {}", symbol, &notice.header);
+        // Header line (padded to max_width, text aligned with detail lines)
+        let header_plain = format!("{}   {}", symbol, &notice.header);
         let padding = max_width.saturating_sub(UnicodeWidthStr::width(header_plain.as_str()));
         output.push_str(&format!(
-            "  {}{} {}{}{} {}│{}\n",
+            "  {}{}   {}{}{} {}│{}\n",
             colour,
             symbol,
             notice.header,
@@ -150,10 +150,10 @@ pub fn render_notices(notices: &[Notice]) -> String {
 
         // Detail lines with sidebar (padded to max_width)
         for line in &notice.lines {
-            let line_plain = format!("  {}", strip_ansi(line));
+            let line_plain = format!("    {}", strip_ansi(line));
             let padding = max_width.saturating_sub(UnicodeWidthStr::width(line_plain.as_str()));
             output.push_str(&format!(
-                "  {}│{} {}{} {}│{}\n",
+                "  {}│{}   {}{} {}│{}\n",
                 colour,
                 ansi::RESET,
                 line,
