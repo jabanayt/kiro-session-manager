@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-04-01
+
+### Added
+
+- Warning shown on ksm list for existing tags that no longer meet validation rules
+- Database migration cleans up blank and whitespace tags on upgrade
+- Session list now uses full terminal width for improved readability of session titles
+- Tags that do not fit on one line wrap cleanly to the next line
+- Auto-linked session notifications now displayed in the same styled box as warnings
+
+### Fixed
+
+- Delete command now accepts comma-separated indices (e.g. ksm d 1,2,3)
+- Interactive delete prompt clarified to show both comma and space formats
+- Tags now validated on creation (lowercase letters, numbers, hyphens, underscores, dots only)
+- ksm tag with no tag arguments now errors with a clear message
+- ksm untag with a non-existent tag now errors instead of silently succeeding
+- Resume by tag is now case-insensitive
+- Archiving and indexing blocked if session has invalid tags, with fix instructions shown before prompts
+- Delete usage hint removed from ksm list output
+
+### Security
+
+- Tag validation prevents ANSI escape sequence injection via tag names
+
 ## [0.2.5] - 2026-03-12
 
 ### Added
