@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
+use crate::cli::pager;
 use crate::cli::styles;
 use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata};
 
@@ -185,13 +186,44 @@ pub fn print_session_list(
         return;
     }
 
-    const NAME_WIDTH: usize = 35;
     const TIME_WIDTH: usize = 8;
     const MSG_WIDTH: usize = 9;
 
     // Calculate index column width based on largest index
     let max_idx = visible_indices.iter().max().unwrap_or(&0);
     let idx_width = format!("[{}]", max_idx).len();
+
+    // Dynamic name width based on terminal width
+    // Fixed columns: indexed marker (5) + spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 28
+    let term_width = pager::terminal_size().map(|(w, _)| w);
+
+    // Find the longest tag display width across all visible sessions
+    let max_tag_width = visible_indices
+        .iter()
+        .map(|&idx| {
+            let tags = get_tags(&sessions[idx].id, metadata);
+            if tags.is_empty() {
+                0
+            } else {
+                3 + tags.join(", ").len()
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    // Name width: terminal - fixed columns - longest tags, capped at 80, floor at 20
+    let name_width = term_width
+        .map(|w| {
+            w.saturating_sub(idx_width)
+                .saturating_sub(28)
+                .saturating_sub(max_tag_width)
+                .clamp(20, 80)
+        })
+        .unwrap_or(35);
+    // Width of a line without tags: idx + indexed(5) + spacing(2) + name + spacing(2) + time(8) + spacing(2) + msgs(9)
+    let base_line_width = idx_width + 5 + 2 + name_width + 2 + TIME_WIDTH + 2 + MSG_WIDTH;
+    // Indent for wrapped tags: align to name column
+    let tag_indent = idx_width + 5 + 2;
 
     println!();
     for &idx in visible_indices {
@@ -207,10 +239,10 @@ pub fn print_session_list(
         {
             let chain = format!(" {}", styles::chain_link(pidx));
             let chain_plain = format!(" ↳ [{}]", pidx);
-            let available = NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()));
+            let available = name_width.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()));
             format!("{}{}", truncate_to_width(&name, available), chain)
         } else {
-            truncate_to_width(&name, NAME_WIDTH)
+            truncate_to_width(&name, name_width)
         };
 
         // Calculate plain width for padding
@@ -222,17 +254,17 @@ pub fn print_session_list(
                 "{}{}",
                 truncate_to_width(
                     &name,
-                    NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))
+                    name_width.saturating_sub(UnicodeWidthStr::width(chain_plain.as_str()))
                 ),
                 chain_plain
             )
         } else {
-            truncate_to_width(&name, NAME_WIDTH)
+            truncate_to_width(&name, name_width)
         };
         let name_padded = format!(
             "{}{}",
             display_name,
-            " ".repeat(NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(plain_name.as_str())))
+            " ".repeat(name_width.saturating_sub(UnicodeWidthStr::width(plain_name.as_str())))
         );
 
         let time_str = format_time_compact(session.updated_at);
@@ -260,15 +292,38 @@ pub fn print_session_list(
             format!("   {}", styles::tags(&tags))
         };
 
-        println!(
-            "{}{}  {}  {}  {}{}",
-            idx_padded,
-            indexed_str,
-            name_padded,
-            styles::time(&time_padded),
-            styles::msg_count(&msg_padded),
-            tags_str
-        );
+        // Check if tags would overflow terminal width
+        let tags_plain_width = if tags.is_empty() {
+            0
+        } else {
+            3 + tags.join(", ").len() // "   " prefix + comma-separated tags
+        };
+        let would_overflow = term_width
+            .map(|w| base_line_width + tags_plain_width > w)
+            .unwrap_or(false);
+
+        if !tags.is_empty() && would_overflow {
+            // Print session without tags, then tags on next line
+            println!(
+                "{}{}  {}  {}  {}",
+                idx_padded,
+                indexed_str,
+                name_padded,
+                styles::time(&time_padded),
+                styles::msg_count(&msg_padded),
+            );
+            println!("{}{}", " ".repeat(tag_indent), styles::tags(&tags),);
+        } else {
+            println!(
+                "{}{}  {}  {}  {}{}",
+                idx_padded,
+                indexed_str,
+                name_padded,
+                styles::time(&time_padded),
+                styles::msg_count(&msg_padded),
+                tags_str
+            );
+        }
 
         // Show parent chain if requested
         if show_parents {
@@ -323,9 +378,39 @@ pub fn print_archive_list(archives: &[Archive]) {
         return;
     }
 
-    const NAME_WIDTH: usize = 35;
     const TIME_WIDTH: usize = 8;
     const MSG_WIDTH: usize = 9;
+
+    // Calculate index column width based on largest index
+    let max_idx = archives.len().saturating_sub(1);
+    let idx_width = format!("[{}]", max_idx).len();
+
+    // Dynamic name width based on terminal width
+    // Fixed columns: spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 23
+    let term_width = pager::terminal_size().map(|(w, _)| w);
+
+    let max_tag_width = archives
+        .iter()
+        .map(|a| {
+            if a.tags.is_empty() {
+                0
+            } else {
+                3 + a.tags.join(", ").len()
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    let name_width = term_width
+        .map(|w| {
+            w.saturating_sub(idx_width)
+                .saturating_sub(23)
+                .saturating_sub(max_tag_width)
+                .clamp(20, 80)
+        })
+        .unwrap_or(35);
+    let base_line_width = idx_width + 2 + name_width + 2 + TIME_WIDTH + 2 + MSG_WIDTH;
+    let tag_indent = idx_width + 2;
 
     println!();
     for (idx, archive) in archives.iter().enumerate() {
@@ -342,13 +427,13 @@ pub fn print_archive_list(archives: &[Archive]) {
             archive.name.clone()
         };
 
-        let name_truncated = truncate_to_width(&name_with_pruned, NAME_WIDTH);
-        let name_plain_truncated = truncate_to_width(&name_plain, NAME_WIDTH);
+        let name_truncated = truncate_to_width(&name_with_pruned, name_width);
+        let name_plain_truncated = truncate_to_width(&name_plain, name_width);
         let name_padded = format!(
             "{}{}",
             name_truncated,
             " ".repeat(
-                NAME_WIDTH.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str()))
+                name_width.saturating_sub(UnicodeWidthStr::width(name_plain_truncated.as_str()))
             )
         );
 
@@ -364,14 +449,34 @@ pub fn print_archive_list(archives: &[Archive]) {
             format!("   {}", styles::tags(&archive.tags))
         };
 
-        println!(
-            "{}  {}  {}  {}{}",
-            styles::index(idx),
-            name_padded,
-            styles::time(&time_padded),
-            styles::msg_count(&msg_padded),
-            tags_str
-        );
+        let tags_plain_width = if archive.tags.is_empty() {
+            0
+        } else {
+            3 + archive.tags.join(", ").len()
+        };
+        let would_overflow = term_width
+            .map(|w| base_line_width + tags_plain_width > w)
+            .unwrap_or(false);
+
+        if !archive.tags.is_empty() && would_overflow {
+            println!(
+                "{}  {}  {}  {}",
+                styles::index(idx),
+                name_padded,
+                styles::time(&time_padded),
+                styles::msg_count(&msg_padded),
+            );
+            println!("{}{}", " ".repeat(tag_indent), styles::tags(&archive.tags),);
+        } else {
+            println!(
+                "{}  {}  {}  {}{}",
+                styles::index(idx),
+                name_padded,
+                styles::time(&time_padded),
+                styles::msg_count(&msg_padded),
+                tags_str
+            );
+        }
     }
 }
 

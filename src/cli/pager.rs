@@ -7,14 +7,14 @@
 use std::io::{self, IsTerminal, Write};
 use std::process::{Command, Stdio};
 
-/// Get terminal height in rows via ioctl, or None if unavailable.
-fn terminal_height() -> Option<usize> {
+/// Get terminal size (width, height) via ioctl, or None if unavailable.
+pub fn terminal_size() -> Option<(usize, usize)> {
     unsafe {
         let mut winsize: libc::winsize = std::mem::zeroed();
         if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsize) == 0
             && winsize.ws_row > 0
         {
-            Some(winsize.ws_row as usize)
+            Some((winsize.ws_col as usize, winsize.ws_row as usize))
         } else {
             None
         }
@@ -33,7 +33,7 @@ pub fn paged_output(content: &str) -> io::Result<()> {
         return io::stdout().write_all(content.as_bytes());
     }
 
-    let height = match terminal_height() {
+    let height = match terminal_size().map(|(_, h)| h) {
         Some(h) => h,
         None => return io::stdout().write_all(content.as_bytes()),
     };

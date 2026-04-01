@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::cli::display;
+use crate::cli::notices::{Notice, render_notices};
 use crate::cli::pager;
 use crate::cli::styles;
 use crate::data::{HybridSource, KsmDatabase, SessionSource};
@@ -46,6 +47,7 @@ pub enum Commands {
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
     #[command(alias = "d")]
     Delete {
+        #[arg(value_delimiter = ',')]
         indices: Option<Vec<usize>>,
         #[arg(short, long)]
         yes: bool,
@@ -60,6 +62,7 @@ pub enum Commands {
     /// Add tags to a session
     Tag {
         index: usize,
+        #[arg(num_args = 1..)]
         tags: Vec<String>,
         #[arg(long)]
         chain: bool,
@@ -67,6 +70,7 @@ pub enum Commands {
     /// Remove tags from a session
     Untag {
         index: usize,
+        #[arg(num_args = 1..)]
         tags: Vec<String>,
         #[arg(long)]
         chain: bool,
@@ -302,11 +306,42 @@ fn cmd_list(
         return Ok(());
     }
 
+    let mut notices = Vec::new();
+
     if result.auto_linked > 0 {
-        println!(
-            "✓ Auto-linked {} compacted session(s) to their parents\n",
+        notices.push(Notice::success(&format!(
+            "Auto-linked {} compacted session(s) to their parents.",
             result.auto_linked
-        );
+        )));
+    }
+
+    if !result.invalid_tag_warnings.is_empty() {
+        let mut lines = Vec::new();
+        for (idx, tag) in &result.invalid_tag_warnings {
+            lines.push(format!(
+                "{} {}",
+                styles::index(*idx),
+                styles::tags(std::slice::from_ref(tag))
+            ));
+        }
+        lines.push(styles::bold(metadata::TAG_RULES).to_string());
+        lines.push(format!(
+            "Remove with: {}",
+            styles::hint("ksm untag <index> \"tag\"")
+        ));
+        notices.push(Notice::warning(
+            &format!(
+                "{} tag(s) are no longer valid due to updated tag rules:",
+                result.invalid_tag_warnings.len()
+            ),
+            lines,
+        ));
+    }
+
+    let notice_output = render_notices(&notices);
+    if !notice_output.is_empty() {
+        print!("{}", notice_output);
+        println!();
     }
 
     let visible = sessions::visible_session_indices(&result.all_sessions, &result.metadata);
@@ -317,8 +352,6 @@ fn cmd_list(
         &result.indexed_session_ids,
         show_parents,
     );
-
-    println!("\nUse 'ksm delete <indices>' to delete sessions (e.g., 'ksm delete 0,2,4')");
 
     Ok(())
 }
@@ -386,13 +419,15 @@ fn cmd_tag(
     sessions::validate_index(index, all_sessions.len())?;
     let session_id = all_sessions[index].id.clone();
 
+    let validated = metadata::validate_tags(tags)?;
+
     let scope = if apply_to_chain {
         metadata::MetadataScope::Chain(session_id)
     } else {
         metadata::MetadataScope::Single(session_id)
     };
 
-    let result = metadata::add_tags(scope, tags, &all_sessions, &mut meta, db)?;
+    let result = metadata::add_tags(scope, &validated, &all_sessions, &mut meta, db)?;
 
     if result.affected_ids.len() > 1 {
         println!(
@@ -400,13 +435,17 @@ fn cmd_tag(
             styles::success(&format!(
                 "Added tags to {} sessions: {}",
                 result.affected_ids.len(),
-                tags.join(", ")
+                validated.join(", ")
             ))
         );
     } else {
         println!(
             "{}",
-            styles::success(&format!("Added tags to [{}]: {}", index, tags.join(", ")))
+            styles::success(&format!(
+                "Added tags to [{}]: {}",
+                index,
+                validated.join(", ")
+            ))
         );
     }
 
@@ -844,6 +883,30 @@ fn cmd_archive(
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
+    // Block if session has invalid tags
+    if let Some(meta) = list_result.metadata.get(&session.id) {
+        let invalid: Vec<&String> = meta
+            .tags
+            .iter()
+            .filter(|t| metadata::validate_tag(t).is_err())
+            .collect();
+        if !invalid.is_empty() {
+            eprintln!(
+                "Error: Session [{}] has invalid tags that must be fixed before archiving:",
+                index
+            );
+            for tag in &invalid {
+                eprintln!("  {}", styles::tags(&[(*tag).clone()]));
+            }
+            eprintln!("{}", metadata::TAG_RULES);
+            eprintln!(
+                "Remove with: {}",
+                styles::hint(&format!("ksm untag {} \"tag\"", index))
+            );
+            anyhow::bail!("Fix invalid tags before archiving.");
+        }
+    }
+
     println!(
         "Archiving session [{}] \"{}\" ({} messages)",
         index, session.preview, session.msg_count
@@ -919,6 +982,30 @@ fn cmd_index(
     let list_result = sessions::session_context(source, db, directory)?;
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
+
+    // Block if session has invalid tags
+    if let Some(meta) = list_result.metadata.get(&session.id) {
+        let invalid: Vec<&String> = meta
+            .tags
+            .iter()
+            .filter(|t| metadata::validate_tag(t).is_err())
+            .collect();
+        if !invalid.is_empty() {
+            eprintln!(
+                "Error: Session [{}] has invalid tags that must be fixed before archiving:",
+                index
+            );
+            for tag in &invalid {
+                eprintln!("  {}", styles::tags(&[(*tag).clone()]));
+            }
+            eprintln!("{}", metadata::TAG_RULES);
+            eprintln!(
+                "Remove with: {}",
+                styles::hint(&format!("ksm untag {} \"tag\"", index))
+            );
+            anyhow::bail!("Fix invalid tags before archiving.");
+        }
+    }
 
     println!(
         "Indexing session [{}] \"{}\" ({} messages)",
@@ -1124,7 +1211,7 @@ fn cmd_delete(
                 false,
             );
             println!();
-            print!("Enter sessions to delete (comma-separated): ");
+            print!("Enter sessions to delete (comma or space-separated): ");
             io::stdout().flush()?;
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;

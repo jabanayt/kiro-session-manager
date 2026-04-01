@@ -3,7 +3,7 @@
 //! All CLI output styling goes through this module for consistency.
 
 /// ANSI escape codes.
-mod ansi {
+pub(crate) mod ansi {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[90m";
@@ -13,6 +13,7 @@ mod ansi {
     pub const CYAN: &str = "\x1b[36m";
     pub const LIGHT_BLUE: &str = "\x1b[94m";
     pub const INVERSE: &str = "\x1b[1;7m";
+    pub const RED: &str = "\x1b[31m";
 }
 
 /// Format index number: bold white `[0]`
@@ -97,4 +98,14 @@ pub fn highlight(s: &str) -> String {
 /// Format separator line: dim grey
 pub fn separator(width: usize) -> String {
     format!("{}{}{}", ansi::DIM, "─".repeat(width), ansi::RESET)
+}
+
+/// Format a hint/command: green
+pub fn hint(s: &str) -> String {
+    format!("{}{}{}", ansi::GREEN, s, ansi::RESET)
+}
+
+/// Format bold text
+pub fn bold(s: &str) -> String {
+    format!("{}{}{}", ansi::BOLD, s, ansi::RESET)
 }
