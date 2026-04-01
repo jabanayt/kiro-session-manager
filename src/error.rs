@@ -54,6 +54,12 @@ pub enum KsmError {
     #[error("Archive not found: {0}")]
     ArchiveNotFound(String),
 
+    #[error("Invalid tag: {0}")]
+    InvalidTag(String),
+
+    #[error("Tag not found: {0}")]
+    TagNotFound(String),
+
     #[error("Session already archived as '{0}'")]
     AlreadyArchived(String),
 

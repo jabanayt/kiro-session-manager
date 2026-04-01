@@ -128,7 +128,11 @@ fn find_by_tag(
         .filter(|(_, s)| {
             metadata
                 .get(&s.id)
-                .map(|m| m.tags.contains(tag))
+                .map(|m| {
+                    m.tags
+                        .iter()
+                        .any(|t| t.to_lowercase() == tag.to_lowercase())
+                })
                 .unwrap_or(false)
         })
         .map(|(idx, s)| ResumeMatch {

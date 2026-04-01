@@ -74,6 +74,8 @@ See [Usage Guide](docs/USAGE.md) for all commands and features.
 - Linux (x86_64 or ARM64)
 - kiro-cli installed and in PATH
 
+MacOS is not currently supported. The database path is hardcoded to the Linux location. MacOS support is planned for a future release.
+
 ## Development
 
 This project is built with AI assistance from [kiro-cli](https://kiro.dev/cli/). As a session manager for kiro-cli, this is a natural fit. All design decisions, code review, and testing are human-led.

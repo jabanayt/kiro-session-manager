@@ -43,7 +43,7 @@ Each line shows:
 - Session name or first message preview
 - Time since last activity (compact format: s, m, h, d, w)
 - Message count
-- Tags (comma-separated)
+- Tags (displayed comma-separated; use spaces to separate when adding tags)
 
 ### Show Full Parent Chain
 
@@ -184,6 +184,8 @@ ksm tag 0 work urgent
 ```
 
 Tags appear in the list output: `work, urgent`
+
+Tags must be lowercase letters, numbers, hyphens, underscores, or dots (e.g. `work`, `bug-fix`, `v0.2.6`). Tags are automatically lowercased on input.
 
 ### Remove Tags
 
