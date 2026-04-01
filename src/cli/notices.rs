@@ -1,6 +1,7 @@
 //! Reusable notice renderer for contextual messages above command output.
 
 use crate::cli::styles::ansi;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug)]
 pub enum NoticeLevel {
@@ -89,7 +90,7 @@ fn level_symbol(level: &NoticeLevel) -> &'static str {
     }
 }
 
-/// Render a block of notices with coloured sidebar.
+/// Render a block of notices with coloured box border.
 /// Returns empty string if notices is empty.
 pub fn render_notices(notices: &[Notice]) -> String {
     if notices.is_empty() {
@@ -102,17 +103,17 @@ pub fn render_notices(notices: &[Notice]) -> String {
     let mut max_width: usize = 0;
     for notice in notices {
         let header_plain = format!("{} {}", level_symbol(&notice.level), &notice.header);
-        max_width = max_width.max(header_plain.len());
+        max_width = max_width.max(UnicodeWidthStr::width(header_plain.as_str()));
         for line in &notice.lines {
             let line_plain = format!("  {}", strip_ansi(line));
-            max_width = max_width.max(line_plain.len());
+            max_width = max_width.max(UnicodeWidthStr::width(line_plain.as_str()));
         }
     }
 
     // Top border (colour of first notice)
     let first_colour = level_colour(&notices[0].level);
     output.push_str(&format!(
-        "  {}┌{}{}\n",
+        "  {}┌{}┐{}\n",
         first_colour,
         "─".repeat(max_width),
         ansi::RESET
@@ -124,28 +125,49 @@ pub fn render_notices(notices: &[Notice]) -> String {
 
         // Blank separator line between notices (colour of current notice)
         if i > 0 {
-            output.push_str(&format!("  {}│{}\n", colour, ansi::RESET));
+            output.push_str(&format!(
+                "  {}│{}{}│{}\n",
+                colour,
+                " ".repeat(max_width),
+                colour,
+                ansi::RESET
+            ));
         }
 
-        // Header line
+        // Header line (padded to max_width)
+        let header_plain = format!("{} {}", symbol, &notice.header);
+        let padding = max_width.saturating_sub(UnicodeWidthStr::width(header_plain.as_str()));
         output.push_str(&format!(
-            "  {}{} {}{}\n",
+            "  {}{} {}{}{} {}│{}\n",
             colour,
             symbol,
             notice.header,
+            ansi::RESET,
+            " ".repeat(padding),
+            colour,
             ansi::RESET
         ));
 
-        // Detail lines with sidebar
+        // Detail lines with sidebar (padded to max_width)
         for line in &notice.lines {
-            output.push_str(&format!("  {}│{} {}\n", colour, ansi::RESET, line));
+            let line_plain = format!("  {}", strip_ansi(line));
+            let padding = max_width.saturating_sub(UnicodeWidthStr::width(line_plain.as_str()));
+            output.push_str(&format!(
+                "  {}│{} {}{} {}│{}\n",
+                colour,
+                ansi::RESET,
+                line,
+                " ".repeat(padding),
+                colour,
+                ansi::RESET
+            ));
         }
     }
 
     // Bottom border (colour of last notice)
     let last_colour = level_colour(&notices[notices.len() - 1].level);
     output.push_str(&format!(
-        "  {}└{}{}\n",
+        "  {}└{}┘{}\n",
         last_colour,
         "─".repeat(max_width),
         ansi::RESET
