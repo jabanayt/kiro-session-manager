@@ -1,4 +1,4 @@
-use crate::models::Session;
+use crate::models::{Session, SourceType};
 use serde::{Deserialize, Serialize};
 
 /// Cached session data for fast list and chain detection operations.
@@ -15,6 +15,8 @@ pub struct CachedSession {
     pub msg_count: u32,
     pub has_compact_tag: bool,
     pub message_ids: Vec<String>,
+    #[serde(default)]
+    pub source_type: SourceType,
 }
 
 impl From<&CachedSession> for Session {
@@ -25,6 +27,7 @@ impl From<&CachedSession> for Session {
             updated_at: c.updated_at,
             preview: c.preview.clone(),
             msg_count: c.msg_count,
+            source_type: c.source_type,
         }
     }
 }
