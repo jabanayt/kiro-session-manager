@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support for TUI/ACP sessions stored at `~/.kiro/sessions/cli/` (created via `kiro-cli acp` or JetBrains/Zed editor integrations)
+- ACP sessions appear merged with legacy sessions in `ksm list`, sorted by last activity
+- `[t]` column marker distinguishes TUI/ACP sessions from legacy chat sessions
+- All commands (delete, resume, name, tag, untag, archive, index, search, chain detection) work on ACP sessions
+
 ## [0.2.7] - 2026-04-01
 
 ### Added

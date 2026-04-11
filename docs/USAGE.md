@@ -32,18 +32,23 @@ ksm list
 Output:
 
 ```
-[0]        Project Planning                           2m    10 msgs   work, urgent
-[1]   [i]  API Integration Research                  15m    35 msgs   research
-[2]        Quick question about Rust                  1h     5 msgs
+[0]        [t]  Project Planning                           2m    10 msgs   work, urgent
+[1]   [i]       API Integration Research                  15m    35 msgs   research
+[2]             Quick question about Rust                  1h     5 msgs
 ```
 
 Each line shows:
 - Index number (used by other commands)
 - `[i]` marker if session is indexed (searchable)
+- `[t]` marker if session is a TUI/ACP session (created via `kiro-cli acp` or an editor integration like JetBrains or Zed)
 - Session name or first message preview
 - Time since last activity (compact format: s, m, h, d, w)
 - Message count
 - Tags (displayed comma-separated; use spaces to separate when adding tags)
+
+### TUI/ACP Sessions
+
+Sessions created through editor integrations (JetBrains, Zed) or `kiro-cli acp` are stored as file pairs at `~/.kiro/sessions/cli/` rather than in kiro-cli's SQLite database. These sessions are shown with a `[t]` marker and support all the same commands as regular sessions: delete, resume, name, tag, archive, index, and search.
 
 ### Show Full Parent Chain
 
