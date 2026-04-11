@@ -709,6 +709,7 @@ impl KsmDatabase {
                 msg_count: row.get::<_, i64>(5)? as u32,
                 has_compact_tag: row.get::<_, i32>(6)? != 0,
                 message_ids: serde_json::from_str(&message_ids_json).unwrap_or_default(),
+                source_type: Default::default(),
             })
         })?;
 

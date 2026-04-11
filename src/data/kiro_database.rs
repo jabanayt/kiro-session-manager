@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::data::SessionSource;
 use crate::error::{KsmError, Result};
-use crate::models::{ConversationData, Session};
+use crate::models::{ConversationData, Session, SourceType};
 
 /// Session source backed by kiro-cli's SQLite database.
 pub struct KiroDatabase {
@@ -69,6 +69,7 @@ impl KiroDatabase {
             updated_at,
             preview,
             msg_count,
+            source_type: SourceType::Legacy,
         }
     }
 

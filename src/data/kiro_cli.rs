@@ -4,7 +4,7 @@ use std::process::Command;
 
 use crate::data::SessionSource;
 use crate::error::{KsmError, Result};
-use crate::models::{ConversationData, Session};
+use crate::models::{ConversationData, Session, SourceType};
 
 /// Session source backed by parsing kiro-cli's stderr output.
 ///
@@ -49,6 +49,7 @@ impl KiroCliSource {
                     updated_at: approximate_updated_at,
                     preview: cap[3].to_string(),
                     msg_count,
+                    source_type: SourceType::Legacy,
                 }
             })
             .collect();
