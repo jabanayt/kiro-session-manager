@@ -65,6 +65,7 @@ pub fn sessions(
             msg_count,
             has_compact_tag,
             message_ids,
+            source_type: source.session_source_type(session_id),
         };
 
         cache.insert(session_id.clone(), cached.clone());
@@ -82,6 +83,12 @@ pub fn sessions(
     // 5. Filter to only sessions that exist in Kiro
     let live_ids: HashSet<_> = updates.iter().map(|(id, _)| id.clone()).collect();
     cache.retain(|id, _| live_ids.contains(id));
+
+    // 6. Always refresh source_type from routing (handles stale cache entries
+    //    that predate the source_type field, e.g. after upgrading ksm)
+    for (session_id, cached) in cache.iter_mut() {
+        cached.source_type = source.session_source_type(session_id);
+    }
 
     Ok(cache)
 }
