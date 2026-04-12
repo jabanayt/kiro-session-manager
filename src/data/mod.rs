@@ -132,7 +132,8 @@ impl SessionSource for HybridSource {
         &self,
         session_id: &str,
     ) -> Result<(ConversationData, i64)> {
-        self.route(session_id).get_conversation_with_created_at(session_id)
+        self.route(session_id)
+            .get_conversation_with_created_at(session_id)
     }
 
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
@@ -148,7 +149,8 @@ impl SessionSource for HybridSource {
     }
 
     fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
-        self.route(session_id).update_timestamp(session_id, timestamp)
+        self.route(session_id)
+            .update_timestamp(session_id, timestamp)
     }
 
     fn delete_session(&self, session_id: &str) -> Result<()> {
