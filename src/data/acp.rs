@@ -46,8 +46,9 @@ impl AcpSource {
         let path = self.json_path(session_id);
         let content = std::fs::read_to_string(&path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
-        serde_json::from_str(&content)
-            .map_err(|e| KsmError::Database(format!("Failed to parse ACP meta {}: {}", session_id, e)))
+        serde_json::from_str(&content).map_err(|e| {
+            KsmError::Database(format!("Failed to parse ACP meta {}: {}", session_id, e))
+        })
     }
 
     /// List all session IDs whose .json files exist in the sessions dir.
@@ -122,8 +123,8 @@ fn iso_to_ms(s: &str) -> i64 {
 fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
     // Algorithm from https://howardhinnant.github.io/date_algorithms.html
     let y = if month <= 2 { year - 1 } else { year };
-    let m = month as i64;
-    let d = day as i64;
+    let m = month;
+    let d = day;
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
@@ -158,7 +159,11 @@ fn parse_jsonl(session_id: &str, content: &str) -> ConversationData {
             };
             if next_event.kind == "AssistantMessage" {
                 assistant_text = extract_text_content(&next_event.data);
-                message_id = next_event.data.get("message_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                message_id = next_event
+                    .data
+                    .get("message_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 break;
             }
             if next_event.kind == "Prompt" {
@@ -205,10 +210,10 @@ fn extract_text_content(data: &serde_json::Value) -> String {
 
 /// Extract preview from .jsonl: title if present, else first Prompt text.
 fn extract_preview(title: Option<&str>, jsonl_content: &str) -> String {
-    if let Some(t) = title {
-        if !t.is_empty() {
-            return t.to_string();
-        }
+    if let Some(t) = title
+        && !t.is_empty()
+    {
+        return t.to_string();
     }
     // Fall back to first Prompt text
     for line in jsonl_content.lines() {
@@ -253,7 +258,11 @@ fn extract_message_ids_from_jsonl(jsonl_content: &str) -> Vec<String> {
             if event.kind != "AssistantMessage" {
                 return None;
             }
-            event.data.get("message_id")?.as_str().map(|s| s.to_string())
+            event
+                .data
+                .get("message_id")?
+                .as_str()
+                .map(|s| s.to_string())
         })
         .collect()
 }
@@ -313,7 +322,10 @@ impl SessionSource for AcpSource {
         Ok(parse_jsonl(session_id, &content))
     }
 
-    fn get_conversation_with_created_at(&self, session_id: &str) -> Result<(ConversationData, i64)> {
+    fn get_conversation_with_created_at(
+        &self,
+        session_id: &str,
+    ) -> Result<(ConversationData, i64)> {
         let meta = self.read_meta(session_id)?;
         let created_at = iso_to_ms(&meta.created_at);
         let conv = self.get_conversation(session_id)?;
@@ -377,7 +389,10 @@ fn ms_to_iso(secs: i64, ms: i64) -> String {
     let h = time_of_day / 3600;
     let m = (time_of_day % 3600) / 60;
     let s = time_of_day % 60;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}000000Z", year, month, day, h, m, s, ms)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}000000Z",
+        year, month, day, h, m, s, ms
+    )
 }
 
 fn epoch_secs_to_ymd(secs: i64) -> (i64, i64, i64) {
