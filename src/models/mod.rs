@@ -15,4 +15,4 @@ pub use conversation::{
     ToolUseContent, ToolUseResultsContent, UserContent, UserMessage,
 };
 pub use metadata::SessionMetadata;
-pub use session::Session;
+pub use session::{Session, SourceType};

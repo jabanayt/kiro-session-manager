@@ -1,3 +1,11 @@
+/// Whether a session comes from the legacy SQLite database or the ACP file store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum SourceType {
+    #[default]
+    Legacy,
+    Acp,
+}
+
 /// A kiro-cli chat session with raw (unformatted) data.
 ///
 /// Timestamps are milliseconds since epoch. Message count is an integer.
@@ -9,4 +17,5 @@ pub struct Session {
     pub updated_at: i64,
     pub preview: String,
     pub msg_count: u32,
+    pub source_type: SourceType,
 }

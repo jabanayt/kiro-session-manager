@@ -26,6 +26,11 @@ pub fn indexed_marker() -> String {
     format!("{}[i]{}", ansi::GREEN, ansi::RESET)
 }
 
+/// Format version marker: cyan `v1` or `v2`
+pub fn version_marker(v: &str) -> String {
+    format!("{}{}{}", ansi::CYAN, v, ansi::RESET)
+}
+
 /// Format session/archive name: plain white
 pub fn name(s: &str) -> String {
     s.to_string()

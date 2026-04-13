@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::cli::pager;
 use crate::cli::styles;
-use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata};
+use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata, SourceType};
 
 /// Format a millisecond timestamp as compact relative time.
 ///
@@ -172,8 +172,8 @@ fn get_parent_index(
 /// Print the session list with new column-aligned format.
 ///
 /// Format:
-/// [0]  [i]  Session name here...              2s ago     9 msgs   tag1, tag2
-/// [1]       Another session                  14m ago   104 msgs   
+/// [0]  [i]  v2  Session name here...              2s ago     9 msgs   tag1, tag2
+/// [1]       v1  Another session                  14m ago   104 msgs   
 pub fn print_session_list(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
@@ -194,7 +194,7 @@ pub fn print_session_list(
     let idx_width = format!("[{}]", max_idx).len();
 
     // Dynamic name width based on terminal width
-    // Fixed columns: indexed marker (5) + spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 28
+    // Fixed columns: indexed marker (5) + source marker (6) + spacing (2) + TIME_WIDTH (8) + spacing (2) + MSG_WIDTH (9) + spacing (2) = 34
     let term_width = pager::terminal_size().map(|(w, _)| w);
 
     // Find the longest tag display width across all visible sessions
@@ -215,15 +215,15 @@ pub fn print_session_list(
     let name_width = term_width
         .map(|w| {
             w.saturating_sub(idx_width)
-                .saturating_sub(28)
+                .saturating_sub(34)
                 .saturating_sub(max_tag_width)
                 .clamp(20, 80)
         })
         .unwrap_or(35);
-    // Width of a line without tags: idx + indexed(5) + spacing(2) + name + spacing(2) + time(8) + spacing(2) + msgs(9)
-    let base_line_width = idx_width + 5 + 2 + name_width + 2 + TIME_WIDTH + 2 + MSG_WIDTH;
+    // Width of a line without tags: idx + indexed(5) + source(6) + spacing(2) + name + spacing(2) + time(8) + spacing(2) + msgs(9)
+    let base_line_width = idx_width + 5 + 6 + 2 + name_width + 2 + TIME_WIDTH + 2 + MSG_WIDTH;
     // Indent for wrapped tags: align to name column
-    let tag_indent = idx_width + 5 + 2;
+    let tag_indent = idx_width + 5 + 6 + 2;
 
     println!();
     for &idx in visible_indices {
@@ -285,6 +285,11 @@ pub fn print_session_list(
         } else {
             "     ".to_string()
         };
+        let source_str = if session.source_type == SourceType::Acp {
+            format!("  {}", styles::version_marker("v2"))
+        } else {
+            format!("  {}", styles::version_marker("v1"))
+        };
 
         let tags_str = if tags.is_empty() {
             String::new()
@@ -305,9 +310,10 @@ pub fn print_session_list(
         if !tags.is_empty() && would_overflow {
             // Print session without tags, then tags on next line
             println!(
-                "{}{}  {}  {}  {}",
+                "{}{}{}  {}  {}  {}",
                 idx_padded,
                 indexed_str,
+                source_str,
                 name_padded,
                 styles::time(&time_padded),
                 styles::msg_count(&msg_padded),
@@ -315,9 +321,10 @@ pub fn print_session_list(
             println!("{}{}", " ".repeat(tag_indent), styles::tags(&tags),);
         } else {
             println!(
-                "{}{}  {}  {}  {}{}",
+                "{}{}{}  {}  {}  {}{}",
                 idx_padded,
                 indexed_str,
+                source_str,
                 name_padded,
                 styles::time(&time_padded),
                 styles::msg_count(&msg_padded),
@@ -356,10 +363,11 @@ pub fn print_session_list(
     }
 
     // Legend
-    if indexed_session_ids
+    let has_indexed = indexed_session_ids
         .iter()
-        .any(|id| visible_indices.iter().any(|&idx| &sessions[idx].id == id))
-    {
+        .any(|id| visible_indices.iter().any(|&idx| &sessions[idx].id == id));
+
+    if has_indexed {
         println!();
         println!(
             "{}",

@@ -1,19 +1,21 @@
+mod acp;
 mod json_store;
 mod kiro_cli;
 mod kiro_database;
 mod ksm_database;
 
+pub use acp::AcpSource;
 pub use json_store::JsonMetadataStore;
 pub use kiro_cli::KiroCliSource;
 pub use kiro_database::KiroDatabase;
 pub use ksm_database::KsmDatabase;
 
 use crate::error::Result;
-use crate::models::{ConversationData, Session};
+use crate::models::{ConversationData, Session, SourceType};
 
 /// Read/write access to kiro-cli's session data.
 ///
-/// Implementations: `KiroDatabase` (primary), `KiroCliSource` (fallback).
+/// Implementations: `KiroDatabase` (primary), `KiroCliSource` (fallback), `AcpSource`.
 pub trait SessionSource {
     /// List all sessions for the current directory, ordered by updated_at DESC.
     fn list_sessions(&self) -> Result<Vec<Session>>;
@@ -44,14 +46,24 @@ pub trait SessionSource {
 
     /// Delete a session via kiro-cli.
     fn delete_session(&self, session_id: &str) -> Result<()>;
+
+    /// The source type for sessions produced by this source.
+    fn source_type(&self) -> SourceType {
+        SourceType::Legacy
+    }
+
+    /// The source type for a specific session ID (for routing sources like HybridSource).
+    fn session_source_type(&self, _session_id: &str) -> SourceType {
+        self.source_type()
+    }
 }
 
 /// Hybrid session source: tries database first, falls back to CLI parsing.
-///
-/// Replaces the fallback logic from current `kiro.rs` `get_sessions()`.
+/// Also merges in ACP/TUI sessions from ~/.kiro/sessions/cli/.
 pub struct HybridSource {
     database: KiroDatabase,
     cli_fallback: KiroCliSource,
+    acp: AcpSource,
 }
 
 impl Default for HybridSource {
@@ -65,69 +77,87 @@ impl HybridSource {
         HybridSource {
             database: KiroDatabase::new(),
             cli_fallback: KiroCliSource::new(),
+            acp: AcpSource::new(),
+        }
+    }
+
+    /// Determine which source owns a session ID by checking ACP first (file existence),
+    /// then falling back to legacy.
+    fn route(&self, session_id: &str) -> &dyn SessionSource {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let json_path = std::path::PathBuf::from(home)
+            .join(".kiro/sessions/cli")
+            .join(format!("{}.json", session_id));
+        if json_path.exists() {
+            &self.acp
+        } else {
+            &self.database
         }
     }
 }
 
 impl SessionSource for HybridSource {
     fn list_sessions(&self) -> Result<Vec<Session>> {
-        match self.database.list_sessions() {
-            Ok(sessions) => Ok(sessions),
+        let mut sessions = match self.database.list_sessions() {
+            Ok(s) => s,
             Err(e) => {
-                // Use eprintln! (not log::warn!) so users always see the fallback warning
-                // Matches current kiro.rs output exactly
                 eprintln!("⚠ Database access failed: {}", e);
                 eprintln!("⚠ Falling back to CLI parsing...\n");
-                self.cli_fallback.list_sessions()
+                self.cli_fallback.list_sessions()?
             }
+        };
+
+        // Merge ACP sessions
+        if let Ok(acp_sessions) = self.acp.list_sessions() {
+            sessions.extend(acp_sessions);
         }
+
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(sessions)
     }
 
     fn list_session_updates(&self) -> Result<Vec<(String, i64)>> {
-        // No fallback - CLI source doesn't support this
-        self.database.list_session_updates()
+        let mut updates = self.database.list_session_updates()?;
+        if let Ok(acp_updates) = self.acp.list_session_updates() {
+            updates.extend(acp_updates);
+        }
+        Ok(updates)
     }
 
     fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
-        self.database
-            .get_conversation(session_id)
-            .or_else(|_| self.cli_fallback.get_conversation(session_id))
+        self.route(session_id).get_conversation(session_id)
     }
 
     fn get_conversation_with_created_at(
         &self,
         session_id: &str,
     ) -> Result<(ConversationData, i64)> {
-        // No fallback - CLI source doesn't support this
-        self.database.get_conversation_with_created_at(session_id)
+        self.route(session_id)
+            .get_conversation_with_created_at(session_id)
     }
 
     fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
-        self.database
-            .get_message_ids(session_id)
-            .or_else(|_| self.cli_fallback.get_message_ids(session_id))
+        self.route(session_id).get_message_ids(session_id)
     }
 
     fn has_compact_tag(&self, session_id: &str) -> Result<bool> {
-        self.database
-            .has_compact_tag(session_id)
-            .or_else(|_| self.cli_fallback.has_compact_tag(session_id))
+        self.route(session_id).has_compact_tag(session_id)
     }
 
     fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
-        self.database
-            .get_timestamps(session_id)
-            .or_else(|_| self.cli_fallback.get_timestamps(session_id))
+        self.route(session_id).get_timestamps(session_id)
     }
 
     fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
-        self.database
+        self.route(session_id)
             .update_timestamp(session_id, timestamp)
-            .or_else(|_| self.cli_fallback.update_timestamp(session_id, timestamp))
     }
 
     fn delete_session(&self, session_id: &str) -> Result<()> {
-        // Both impls call kiro-cli, so delegate to either
-        self.database.delete_session(session_id)
+        self.route(session_id).delete_session(session_id)
+    }
+
+    fn session_source_type(&self, session_id: &str) -> SourceType {
+        self.route(session_id).source_type()
     }
 }
