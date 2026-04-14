@@ -97,37 +97,64 @@ struct AcpEvent {
 }
 
 /// Parse ISO 8601 timestamp to milliseconds since epoch.
-fn iso_to_ms(s: &str) -> i64 {
-    // Use a simple manual parse to avoid adding a chrono dependency.
-    // Format: "2026-03-22T05:59:41.761090399Z"
-    // We parse up to seconds precision and ignore sub-seconds.
-    let s = s.trim_end_matches('Z');
-    // Split on T
-    let (date_part, time_part) = match s.split_once('T') {
-        Some(p) => p,
-        None => return 0,
+///
+/// Handles timezone suffixes:
+/// - `Z` (UTC)
+/// - `+HH:MM` or `-HH:MM` (timezone offset, stripped and treated as UTC)
+///
+/// Returns error for invalid formats instead of silently returning 0.
+fn iso_to_ms(s: &str) -> Result<i64> {
+    let s = s.trim();
+
+    // Handle timezone suffix (Z or +HH:MM or -HH:MM)
+    let datetime = if let Some(stripped) = s.strip_suffix('Z') {
+        stripped
+    } else if s.len() > 6
+        && (s.as_bytes()[s.len() - 6] == b'+' || s.as_bytes()[s.len() - 6] == b'-')
+    {
+        // Has offset like +12:00 or -05:00, strip it (treat as UTC for simplicity)
+        &s[..s.len() - 6]
+    } else {
+        return Err(KsmError::Parse(format!("invalid timestamp format: {}", s)));
     };
+
+    let (date_part, time_part) = datetime
+        .split_once('T')
+        .ok_or_else(|| KsmError::Parse(format!("missing T separator: {}", s)))?;
+
     let date_parts: Vec<&str> = date_part.split('-').collect();
     let time_parts: Vec<&str> = time_part.split(':').collect();
+
     if date_parts.len() < 3 || time_parts.len() < 3 {
-        return 0;
+        return Err(KsmError::Parse(format!("incomplete timestamp: {}", s)));
     }
-    let year: i64 = date_parts[0].parse().unwrap_or(0);
-    let month: i64 = date_parts[1].parse().unwrap_or(0);
-    let day: i64 = date_parts[2].parse().unwrap_or(0);
-    let hour: i64 = time_parts[0].parse().unwrap_or(0);
-    let min: i64 = time_parts[1].parse().unwrap_or(0);
+
+    let year: i64 = date_parts[0]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid year: {}", s)))?;
+    let month: i64 = date_parts[1]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid month: {}", s)))?;
+    let day: i64 = date_parts[2]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid day: {}", s)))?;
+    let hour: i64 = time_parts[0]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid hour: {}", s)))?;
+    let min: i64 = time_parts[1]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid minute: {}", s)))?;
     let sec: i64 = time_parts[2]
         .split('.')
         .next()
         .unwrap_or("0")
         .parse()
-        .unwrap_or(0);
+        .map_err(|_| KsmError::Parse(format!("invalid second: {}", s)))?;
 
     // Days since epoch using proleptic Gregorian calendar
     let days = days_since_epoch(year, month, day);
     let secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    secs * 1000
+    Ok(secs * 1000)
 }
 
 fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
@@ -296,8 +323,8 @@ impl SessionSource for AcpSource {
 
             sessions.push(Session {
                 id: meta.session_id,
-                created_at: iso_to_ms(&meta.created_at),
-                updated_at: iso_to_ms(&meta.updated_at),
+                created_at: iso_to_ms(&meta.created_at)?,
+                updated_at: iso_to_ms(&meta.updated_at)?,
                 preview,
                 msg_count,
                 source_type: SourceType::Acp,
@@ -319,7 +346,7 @@ impl SessionSource for AcpSource {
             if meta.cwd != current_dir {
                 continue;
             }
-            updates.push((meta.session_id, iso_to_ms(&meta.updated_at)));
+            updates.push((meta.session_id, iso_to_ms(&meta.updated_at)?));
         }
 
         Ok(updates)
@@ -337,7 +364,7 @@ impl SessionSource for AcpSource {
         session_id: &str,
     ) -> Result<(ConversationData, i64)> {
         let meta = self.read_meta(session_id)?;
-        let created_at = iso_to_ms(&meta.created_at);
+        let created_at = iso_to_ms(&meta.created_at)?;
         let conv = self.get_conversation(session_id)?;
         Ok((conv, created_at))
     }
@@ -355,7 +382,7 @@ impl SessionSource for AcpSource {
 
     fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
         let meta = self.read_meta(session_id)?;
-        Ok((iso_to_ms(&meta.created_at), iso_to_ms(&meta.updated_at)))
+        Ok((iso_to_ms(&meta.created_at)?, iso_to_ms(&meta.updated_at)?))
     }
 
     fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
@@ -377,12 +404,28 @@ impl SessionSource for AcpSource {
         Ok(())
     }
 
+    /// Delete a session from ACP storage via kiro-cli.
+    ///
+    /// Uses `kiro-cli chat --delete-session <id> --session-source v2` to ensure
+    /// proper cleanup consistent with kiro-cli's expectations.
     fn delete_session(&self, session_id: &str) -> Result<()> {
-        let json_path = self.json_path(session_id);
-        let jsonl_path = self.jsonl_path(session_id);
-        // Remove both files; ignore errors if already gone
-        let _ = std::fs::remove_file(&json_path);
-        let _ = std::fs::remove_file(&jsonl_path);
+        let output = std::process::Command::new("kiro-cli")
+            .args([
+                "chat",
+                "--delete-session",
+                session_id,
+                "--session-source",
+                "v2",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(KsmError::KiroCli(format!(
+                "Failed to delete session {}: {}",
+                session_id,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
         Ok(())
     }
 
