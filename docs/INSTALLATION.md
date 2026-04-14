@@ -10,19 +10,14 @@ Available binaries:
 |------|----------|
 | `ksm-linux-x86_64.tar.gz` | Linux (Intel/AMD) |
 | `ksm-linux-aarch64.tar.gz` | Linux (ARM64) |
-| `ksm-macos-x86_64.tar.gz` | macOS (Intel) |
 | `ksm-macos-aarch64.tar.gz` | macOS (Apple Silicon) |
+| `ksm-macos-x86_64.tar.gz` | macOS (Intel) |
 
 Extract and place in your PATH:
 
 ```bash
-# Linux
-tar xzf ksm-linux-<arch>.tar.gz
+tar xzf ksm-<platform>-<arch>.tar.gz
 cp ksm ~/.local/bin/
-
-# macOS
-tar xzf ksm-macos-<arch>.tar.gz
-cp ksm /usr/local/bin/
 ```
 
 Or run directly without installing:
@@ -63,11 +58,7 @@ cargo build --release
 The binary is at `target/release/ksm`. Place it in your PATH:
 
 ```bash
-# Linux
 cp target/release/ksm ~/.local/bin/
-
-# macOS
-cp target/release/ksm /usr/local/bin/
 ```
 
 ## Verifying Installation
@@ -83,14 +74,12 @@ ksm -V        # or --version
 
 ## PATH Setup
 
-If the install location is not in your PATH:
+If `~/.local/bin/` is not in your PATH, add it to your shell profile:
 
 ```bash
 # Linux: add to ~/.bashrc
-export PATH="$HOME/.local/bin:$PATH"
-
 # macOS: add to ~/.zshrc or ~/.bash_profile
-export PATH="/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Then reload your shell:
