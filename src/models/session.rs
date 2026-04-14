@@ -6,6 +6,15 @@ pub enum SourceType {
     Acp,
 }
 
+impl SourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceType::Acp => "v2",
+            SourceType::Legacy => "v1",
+        }
+    }
+}
+
 /// A kiro-cli chat session with raw (unformatted) data.
 ///
 /// Timestamps are milliseconds since epoch. Message count is an integer.

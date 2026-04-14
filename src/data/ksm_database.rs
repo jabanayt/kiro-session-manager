@@ -342,6 +342,8 @@ impl KsmDatabase {
                 session_ids TEXT NOT NULL DEFAULT '[]'
             );
 
+            ALTER TABLE session_cache ADD COLUMN source_type TEXT NOT NULL DEFAULT 'v1';
+
             UPDATE schema_version SET version = 6;",
         )?;
 
@@ -758,8 +760,8 @@ impl KsmDatabase {
         let mut stmt = conn.prepare(
             "INSERT OR REPLACE INTO session_cache
              (session_id, directory, updated_at, created_at, preview, msg_count,
-              has_compact_tag, message_ids)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              has_compact_tag, message_ids, source_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )?;
 
         for session in sessions {
@@ -773,6 +775,7 @@ impl KsmDatabase {
                 session.msg_count as i64,
                 session.has_compact_tag as i32,
                 message_ids_json,
+                session.source_type.as_str(),
             ])?;
         }
 
