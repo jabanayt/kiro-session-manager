@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-04-14
+
+### Fixed
+
+- Deleting one of two duplicate sessions (v1/v2 with same ID) no longer removes metadata for both
+
 ## [0.2.8] - 2026-04-14
 
 ### Added
