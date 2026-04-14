@@ -7,6 +7,23 @@ use crate::error::Result;
 use crate::models::{ArchiveStatus, Session, SessionMetadata, SourceType};
 use crate::services::chains;
 
+/// Check if another session with the same ID exists (different source_type).
+/// For batch deletes, excludes sessions that are also being deleted.
+fn has_sibling(
+    session_id: &str,
+    source_type: SourceType,
+    all_sessions: &[Session],
+    being_deleted: &[(String, SourceType)],
+) -> bool {
+    all_sessions.iter().any(|s| {
+        s.id == session_id
+            && s.source_type != source_type
+            && !being_deleted
+                .iter()
+                .any(|(did, dst)| did == &s.id && *dst == s.source_type)
+    })
+}
+
 /// Result of a delete operation.
 pub struct DeleteResult {
     /// Session IDs that were deleted.
@@ -57,8 +74,10 @@ pub fn delete_from_chain(
             }
 
             source.delete_session(session_id, source_type)?;
-            metadata.remove(session_id);
-            db.delete_metadata(session_id)?;
+            if !has_sibling(session_id, source_type, sessions, &[]) {
+                metadata.remove(session_id);
+                db.delete_metadata(session_id)?;
+            }
 
             Ok(DeleteResult {
                 deleted_ids: vec![session_id.to_string()],
@@ -88,8 +107,10 @@ pub fn delete_from_chain(
                     indexed_count += 1;
                 }
                 source.delete_session(id, source_type)?;
-                metadata.remove(id);
-                db.delete_metadata(id)?;
+                if !has_sibling(id, source_type, sessions, &[]) {
+                    metadata.remove(id);
+                    db.delete_metadata(id)?;
+                }
             }
 
             Ok(DeleteResult {
@@ -110,8 +131,10 @@ pub fn delete_from_chain(
                     indexed_count += 1;
                 }
                 source.delete_session(id, source_type)?;
-                metadata.remove(id);
-                db.delete_metadata(id)?;
+                if !has_sibling(id, source_type, sessions, &[]) {
+                    metadata.remove(id);
+                    db.delete_metadata(id)?;
+                }
             }
 
             Ok(DeleteResult {
@@ -126,6 +149,7 @@ pub fn delete_from_chain(
 /// Delete multiple sessions (standard, non-chain deletion).
 pub fn delete_sessions(
     sessions: &[(String, SourceType)],
+    all_sessions: &[Session],
     source: &dyn SessionSource,
     metadata: &mut HashMap<String, SessionMetadata>,
     db: &KsmDatabase,
@@ -141,8 +165,10 @@ pub fn delete_sessions(
             indexed_count += 1;
         }
         source.delete_session(id, *source_type)?;
-        metadata.remove(id);
-        db.delete_metadata(id)?;
+        if !has_sibling(id, *source_type, all_sessions, sessions) {
+            metadata.remove(id);
+            db.delete_metadata(id)?;
+        }
     }
 
     Ok(DeleteResult {
