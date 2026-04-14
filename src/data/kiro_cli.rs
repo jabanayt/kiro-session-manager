@@ -4,7 +4,7 @@ use std::process::Command;
 
 use crate::data::SessionSource;
 use crate::error::{KsmError, Result};
-use crate::models::{ConversationData, Session};
+use crate::models::{ConversationData, Session, SourceType};
 
 /// Session source backed by parsing kiro-cli's stderr output.
 ///
@@ -49,6 +49,7 @@ impl KiroCliSource {
                     updated_at: approximate_updated_at,
                     preview: cap[3].to_string(),
                     msg_count,
+                    source_type: SourceType::Legacy,
                 }
             })
             .collect();
@@ -95,7 +96,11 @@ impl SessionSource for KiroCliSource {
         ))
     }
 
-    fn get_conversation(&self, _session_id: &str) -> Result<ConversationData> {
+    fn get_conversation(
+        &self,
+        _session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<ConversationData> {
         Err(KsmError::KiroCli(
             "Conversation data not available via CLI fallback".to_string(),
         ))
@@ -104,37 +109,43 @@ impl SessionSource for KiroCliSource {
     fn get_conversation_with_created_at(
         &self,
         _session_id: &str,
+        _source_type: SourceType,
     ) -> Result<(ConversationData, i64)> {
         Err(KsmError::KiroCli(
             "Conversation with timestamps not available via CLI fallback".to_string(),
         ))
     }
 
-    fn get_message_ids(&self, _session_id: &str) -> Result<Vec<String>> {
+    fn get_message_ids(&self, _session_id: &str, _source_type: SourceType) -> Result<Vec<String>> {
         Err(KsmError::KiroCli(
             "Message IDs not available via CLI fallback".to_string(),
         ))
     }
 
-    fn has_compact_tag(&self, _session_id: &str) -> Result<bool> {
+    fn has_compact_tag(&self, _session_id: &str, _source_type: SourceType) -> Result<bool> {
         Err(KsmError::KiroCli(
             "Compact tag check not available via CLI fallback".to_string(),
         ))
     }
 
-    fn get_timestamps(&self, _session_id: &str) -> Result<(i64, i64)> {
+    fn get_timestamps(&self, _session_id: &str, _source_type: SourceType) -> Result<(i64, i64)> {
         Err(KsmError::KiroCli(
             "Timestamps not available via CLI fallback".to_string(),
         ))
     }
 
-    fn update_timestamp(&self, _session_id: &str, _timestamp: i64) -> Result<()> {
+    fn update_timestamp(
+        &self,
+        _session_id: &str,
+        _timestamp: i64,
+        _source_type: SourceType,
+    ) -> Result<()> {
         Err(KsmError::KiroCli(
             "Timestamp update not available via CLI fallback".to_string(),
         ))
     }
 
-    fn delete_session(&self, session_id: &str) -> Result<()> {
+    fn delete_session(&self, session_id: &str, _source_type: SourceType) -> Result<()> {
         let output = Command::new("kiro-cli")
             .args(["chat", "--delete-session", session_id])
             .output()?;

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::{ArchiveStatus, Session, SessionMetadata};
+use crate::models::{ArchiveStatus, Session, SessionMetadata, SourceType};
 use crate::services::chains;
 
 /// Result of a delete operation.
@@ -34,6 +34,7 @@ pub fn delete_from_chain(
     metadata: &mut HashMap<String, SessionMetadata>,
     source: &dyn SessionSource,
     db: &KsmDatabase,
+    source_type: SourceType,
 ) -> Result<DeleteResult> {
     match choice {
         ChainDeleteChoice::SingleRelink => {
@@ -55,7 +56,7 @@ pub fn delete_from_chain(
                 indexed_count = 1;
             }
 
-            source.delete_session(session_id)?;
+            source.delete_session(session_id, source_type)?;
             metadata.remove(session_id);
             db.delete_metadata(session_id)?;
 
@@ -86,7 +87,7 @@ pub fn delete_from_chain(
                     db.set_indexed(archive_id, false)?;
                     indexed_count += 1;
                 }
-                source.delete_session(id)?;
+                source.delete_session(id, source_type)?;
                 metadata.remove(id);
                 db.delete_metadata(id)?;
             }
@@ -108,7 +109,7 @@ pub fn delete_from_chain(
                     db.set_indexed(archive_id, false)?;
                     indexed_count += 1;
                 }
-                source.delete_session(id)?;
+                source.delete_session(id, source_type)?;
                 metadata.remove(id);
                 db.delete_metadata(id)?;
             }
@@ -124,26 +125,28 @@ pub fn delete_from_chain(
 
 /// Delete multiple sessions (standard, non-chain deletion).
 pub fn delete_sessions(
-    session_ids: &[String],
+    sessions: &[(String, SourceType)],
     source: &dyn SessionSource,
     metadata: &mut HashMap<String, SessionMetadata>,
     db: &KsmDatabase,
 ) -> Result<DeleteResult> {
     let mut indexed_count = 0;
 
-    for id in session_ids {
+    for (id, source_type) in sessions {
         // Clear index if session is indexed before deleting
-        if let Some(ArchiveStatus::Indexed { archive_id, .. }) = db.get_archive_status(id)? {
+        if let Some(ArchiveStatus::Indexed { archive_id, .. }) =
+            db.get_archive_status_for_source(id, *source_type)?
+        {
             db.set_indexed(archive_id, false)?;
             indexed_count += 1;
         }
-        source.delete_session(id)?;
+        source.delete_session(id, *source_type)?;
         metadata.remove(id);
         db.delete_metadata(id)?;
     }
 
     Ok(DeleteResult {
-        deleted_ids: session_ids.to_vec(),
+        deleted_ids: sessions.iter().map(|(id, _)| id.clone()).collect(),
         relinked: vec![],
         indexed_count,
     })

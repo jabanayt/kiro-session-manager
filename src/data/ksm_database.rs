@@ -12,7 +12,7 @@ use crate::config::{Config, load_config, metadata_path};
 use crate::error::{KsmError, Result};
 use crate::models::{
     Archive, ArchiveStatus, CachedSession, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult,
-    SessionMetadata,
+    SessionMetadata, SourceType,
 };
 
 /// State key for pending reindex tracking.
@@ -85,6 +85,7 @@ impl KsmDatabase {
             self.migrate_v2_to_v3(&conn)?;
             self.migrate_v3_to_v4(&conn)?;
             self.migrate_v4_to_v5(&conn)?;
+            self.migrate_v5_to_v6(&conn)?;
         } else {
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
@@ -96,23 +97,30 @@ impl KsmDatabase {
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 2 => {
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 3 => {
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 4 => {
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
-                5 => {} // Current version
+                5 => {
+                    self.migrate_v5_to_v6(&conn)?;
+                }
+                6 => {} // Current version
                 _ => {
                     return Err(KsmError::SchemaVersionMismatch {
-                        expected: 5,
+                        expected: 6,
                         found: version,
                     });
                 }
@@ -320,6 +328,74 @@ impl KsmDatabase {
         tx.execute("UPDATE schema_version SET version = 5", [])?;
         tx.commit()?;
         debug!("Migrated schema from version 4 to version 5");
+        Ok(())
+    }
+
+    fn migrate_v5_to_v6(&self, conn: &Connection) -> Result<()> {
+        // Must be outside transaction per SQLite rules
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS acp_cache (
+                directory TEXT PRIMARY KEY,
+                dir_mtime_secs INTEGER NOT NULL,
+                dir_mtime_nanos INTEGER NOT NULL,
+                session_ids TEXT NOT NULL DEFAULT '[]'
+            );
+
+            DROP TABLE IF EXISTS session_cache;
+
+            CREATE TABLE session_cache (
+                session_id TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                preview TEXT NOT NULL,
+                msg_count INTEGER NOT NULL,
+                has_compact_tag INTEGER NOT NULL DEFAULT 0,
+                message_ids TEXT NOT NULL DEFAULT '[]',
+                source_type TEXT NOT NULL DEFAULT 'v1',
+                PRIMARY KEY (session_id, source_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory);
+
+            ALTER TABLE archives ADD COLUMN source_type TEXT NOT NULL DEFAULT 'v1';
+
+            CREATE TABLE archives_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                message_count INTEGER NOT NULL,
+                session_created_at INTEGER NOT NULL,
+                archived_at INTEGER NOT NULL,
+                tags TEXT,
+                pruned BOOLEAN NOT NULL DEFAULT FALSE,
+                is_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                source_type TEXT NOT NULL DEFAULT 'v1',
+                UNIQUE(session_id, source_type)
+            );
+
+            INSERT INTO archives_new SELECT * FROM archives;
+
+            DROP TABLE archives;
+
+            ALTER TABLE archives_new RENAME TO archives;
+
+            CREATE INDEX IF NOT EXISTS idx_archives_directory ON archives(directory);
+            CREATE INDEX IF NOT EXISTS idx_archives_name ON archives(name);
+
+            UPDATE schema_version SET version = 6;",
+        )?;
+
+        tx.commit()?;
+
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
+        debug!("Migrated schema from version 5 to version 6");
         Ok(())
     }
 
@@ -671,9 +747,11 @@ impl KsmDatabase {
         Ok(())
     }
 
-    /// Set pending reindex for a session.
-    pub fn set_pending_reindex(&self, session_id: &str) -> Result<()> {
-        self.set_state(STATE_PENDING_REINDEX, session_id)
+    /// Set pending reindex for a session with its source type.
+    /// Stores as "session_id:source_type" (e.g. "abc-123:v1").
+    pub fn set_pending_reindex(&self, session_id: &str, source_type: SourceType) -> Result<()> {
+        let value = format!("{}:{}", session_id, source_type.as_str());
+        self.set_state(STATE_PENDING_REINDEX, &value)
     }
 
     /// Clear pending reindex.
@@ -681,25 +759,40 @@ impl KsmDatabase {
         self.clear_state(STATE_PENDING_REINDEX)
     }
 
-    /// Get pending reindex session ID.
-    pub fn get_pending_reindex(&self) -> Result<Option<String>> {
-        self.get_state(STATE_PENDING_REINDEX)
+    /// Get pending reindex session ID and source type.
+    pub fn get_pending_reindex(&self) -> Result<Option<(String, SourceType)>> {
+        match self.get_state(STATE_PENDING_REINDEX)? {
+            Some(value) => {
+                if let Some((id, st_str)) = value.rsplit_once(':') {
+                    let st: SourceType = st_str.parse().unwrap_or_default();
+                    Ok(Some((id.to_string(), st)))
+                } else {
+                    // Legacy format (just session_id), default to Legacy
+                    Ok(Some((value, SourceType::Legacy)))
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     // ========== Session Cache Methods ==========
 
-    /// Get cached sessions for a directory, keyed by session_id.
-    pub fn get_cached_sessions(&self, directory: &str) -> Result<HashMap<String, CachedSession>> {
+    /// Get cached sessions for a directory, keyed by (session_id, source_type).
+    pub fn get_cached_sessions(
+        &self,
+        directory: &str,
+    ) -> Result<HashMap<(String, SourceType), CachedSession>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
             "SELECT session_id, directory, updated_at, created_at, preview, msg_count,
-                    has_compact_tag, message_ids
+                    has_compact_tag, message_ids, source_type
              FROM session_cache WHERE directory = ?",
         )?;
 
         let mut cache = HashMap::new();
         let rows = stmt.query_map([directory], |row| {
             let message_ids_json: String = row.get(7)?;
+            let source_type_str: String = row.get(8)?;
             Ok(CachedSession {
                 session_id: row.get(0)?,
                 directory: row.get(1)?,
@@ -709,12 +802,19 @@ impl KsmDatabase {
                 msg_count: row.get::<_, i64>(5)? as u32,
                 has_compact_tag: row.get::<_, i32>(6)? != 0,
                 message_ids: serde_json::from_str(&message_ids_json).unwrap_or_default(),
+                source_type: source_type_str.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        8,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
             })
         })?;
 
         for row in rows {
             let cached = row?;
-            cache.insert(cached.session_id.clone(), cached);
+            cache.insert((cached.session_id.clone(), cached.source_type), cached);
         }
 
         Ok(cache)
@@ -730,8 +830,8 @@ impl KsmDatabase {
         let mut stmt = conn.prepare(
             "INSERT OR REPLACE INTO session_cache
              (session_id, directory, updated_at, created_at, preview, msg_count,
-              has_compact_tag, message_ids)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              has_compact_tag, message_ids, source_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )?;
 
         for session in sessions {
@@ -745,6 +845,7 @@ impl KsmDatabase {
                 session.msg_count as i64,
                 session.has_compact_tag as i32,
                 message_ids_json,
+                session.source_type.as_str(),
             ])?;
         }
 
@@ -755,22 +856,31 @@ impl KsmDatabase {
     pub fn delete_stale_cache(
         &self,
         directory: &str,
-        live_session_ids: &HashSet<String>,
+        live_keys: &HashSet<(String, SourceType)>,
     ) -> Result<usize> {
         let conn = self.open()?;
 
-        // Get all cached IDs for this directory
-        let mut stmt = conn.prepare("SELECT session_id FROM session_cache WHERE directory = ?")?;
-        let cached_ids: Vec<String> = stmt
-            .query_map([directory], |row| row.get(0))?
+        // Get all cached keys for this directory
+        let mut stmt =
+            conn.prepare("SELECT session_id, source_type FROM session_cache WHERE directory = ?")?;
+        let cached_keys: Vec<(String, SourceType)> = stmt
+            .query_map([directory], |row| {
+                let id: String = row.get(0)?;
+                let st: String = row.get(1)?;
+                Ok((id, st))
+            })?
             .filter_map(|r| r.ok())
-            .collect();
+            .map(|(id, st)| Ok((id, st.parse()?)))
+            .collect::<Result<_>>()?;
 
         // Delete those not in live set
         let mut deleted = 0;
-        for id in cached_ids {
-            if !live_session_ids.contains(&id) {
-                conn.execute("DELETE FROM session_cache WHERE session_id = ?", [&id])?;
+        for (id, source_type) in cached_keys {
+            if !live_keys.contains(&(id.clone(), source_type)) {
+                conn.execute(
+                    "DELETE FROM session_cache WHERE session_id = ? AND source_type = ?",
+                    rusqlite::params![id, source_type.as_str()],
+                )?;
                 deleted += 1;
             }
         }
@@ -778,29 +888,131 @@ impl KsmDatabase {
         Ok(deleted)
     }
 
+    // ========== ACP Cache Methods ==========
+
+    /// Get cached ACP directory mtime and session IDs.
+    pub fn get_acp_cache(
+        &self,
+        directory: &str,
+    ) -> Result<Option<(std::time::SystemTime, Vec<String>)>> {
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT dir_mtime_secs, dir_mtime_nanos, session_ids
+             FROM acp_cache WHERE directory = ?",
+        )?;
+
+        let result = stmt.query_row([directory], |row| {
+            let secs: i64 = row.get(0)?;
+            let nanos: u32 = row.get(1)?;
+            let ids_json: String = row.get(2)?;
+            Ok((secs, nanos, ids_json))
+        });
+
+        match result {
+            Ok((secs, nanos, ids_json)) => {
+                let mtime = std::time::UNIX_EPOCH + std::time::Duration::new(secs as u64, nanos);
+                let ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
+                Ok(Some((mtime, ids)))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(KsmError::Database(e.to_string())),
+        }
+    }
+
+    /// Set cached ACP directory mtime and session IDs.
+    pub fn set_acp_cache(
+        &self,
+        directory: &str,
+        mtime: std::time::SystemTime,
+        session_ids: &[String],
+    ) -> Result<()> {
+        let conn = self.open()?;
+        let duration = mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let ids_json = serde_json::to_string(session_ids)?;
+
+        conn.execute(
+            "INSERT INTO acp_cache (directory, dir_mtime_secs, dir_mtime_nanos, session_ids)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(directory) DO UPDATE SET
+                dir_mtime_secs = ?2,
+                dir_mtime_nanos = ?3,
+                session_ids = ?4",
+            rusqlite::params![
+                directory,
+                duration.as_secs() as i64,
+                duration.subsec_nanos(),
+                ids_json
+            ],
+        )?;
+        Ok(())
+    }
+
     // ========== Archive Methods ==========
 
-    /// Check archive/index status of a session.
+    /// Check archive/index status of a session (any source type).
     pub fn get_archive_status(&self, session_id: &str) -> Result<Option<ArchiveStatus>> {
         let conn = self.open()?;
         match conn
-            .prepare("SELECT id, name, is_indexed FROM archives WHERE session_id = ?")?
+            .prepare("SELECT id, name, is_indexed, source_type FROM archives WHERE session_id = ?")?
             .query_row([session_id], |row| {
                 let id: i64 = row.get(0)?;
                 let name: String = row.get(1)?;
                 let is_indexed: bool = row.get::<_, i64>(2)? != 0;
-                Ok((id, name, is_indexed))
+                let st_str: String = row.get(3)?;
+                Ok((id, name, is_indexed, st_str))
             }) {
-            Ok((id, name, is_indexed)) => {
+            Ok((id, name, is_indexed, st_str)) => {
+                let st: SourceType = st_str.parse().unwrap_or_default();
                 if is_indexed {
                     Ok(Some(ArchiveStatus::Indexed {
                         name,
                         archive_id: id,
+                        source_type: st,
                     }))
                 } else {
                     Ok(Some(ArchiveStatus::Archived {
                         name,
                         archive_id: id,
+                        source_type: st,
+                    }))
+                }
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Check archive/index status of a session for a specific source type.
+    pub fn get_archive_status_for_source(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<Option<ArchiveStatus>> {
+        let conn = self.open()?;
+        match conn
+            .prepare("SELECT id, name, is_indexed, source_type FROM archives WHERE session_id = ? AND source_type = ?")?
+            .query_row(rusqlite::params![session_id, source_type.as_str()], |row| {
+                let id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let is_indexed: bool = row.get::<_, i64>(2)? != 0;
+                let st_str: String = row.get(3)?;
+                Ok((id, name, is_indexed, st_str))
+            }) {
+            Ok((id, name, is_indexed, st_str)) => {
+                let st: SourceType = st_str.parse().unwrap_or_default();
+                if is_indexed {
+                    Ok(Some(ArchiveStatus::Indexed {
+                        name,
+                        archive_id: id,
+                        source_type: st,
+                    }))
+                } else {
+                    Ok(Some(ArchiveStatus::Archived {
+                        name,
+                        archive_id: id,
+                        source_type: st,
                     }))
                 }
             }
@@ -827,8 +1039,8 @@ impl KsmDatabase {
 
         let archive_id = {
             let insert_result = tx.execute(
-                "INSERT INTO archives (session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO archives (session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     archive.session_id,
                     archive.name,
@@ -839,6 +1051,7 @@ impl KsmDatabase {
                     tags_json,
                     archive.pruned,
                     is_indexed,
+                    archive.source_type.as_str(),
                 ],
             );
 
@@ -848,8 +1061,13 @@ impl KsmDatabase {
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
                     let existing_name: String = conn
-                        .prepare("SELECT name FROM archives WHERE session_id = ?")?
-                        .query_row([&archive.session_id], |row| row.get(0))
+                        .prepare(
+                            "SELECT name FROM archives WHERE session_id = ? AND source_type = ?",
+                        )?
+                        .query_row(
+                            rusqlite::params![&archive.session_id, archive.source_type.as_str()],
+                            |row| row.get(0),
+                        )
                         .unwrap_or_else(|_| "unknown".to_string());
                     return Err(KsmError::AlreadyArchived(existing_name));
                 }
@@ -981,7 +1199,7 @@ impl KsmDatabase {
     pub fn get_archive(&self, name: &str, directory: &str) -> Result<Archive> {
         let conn = self.open()?;
         conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE name = ? AND directory = ?",
         )?
         .query_row(rusqlite::params![name, directory], |row| {
@@ -997,7 +1215,7 @@ impl KsmDatabase {
     pub fn get_archive_by_id(&self, archive_id: i64) -> Result<Archive> {
         let conn = self.open()?;
         conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE id = ?",
         )?
         .query_row([archive_id], Self::row_to_archive)
@@ -1039,7 +1257,7 @@ impl KsmDatabase {
     pub fn list_archives(&self, directory: &str) -> Result<Vec<Archive>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE directory = ? AND is_indexed = FALSE ORDER BY archived_at DESC",
         )?;
 
@@ -1056,7 +1274,7 @@ impl KsmDatabase {
     pub fn list_indexed(&self, directory: &str) -> Result<Vec<Archive>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE directory = ? AND is_indexed = TRUE ORDER BY archived_at DESC",
         )?;
 
@@ -1089,6 +1307,11 @@ impl KsmDatabase {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
 
+        let st_str: String = row
+            .get::<_, Option<String>>(10)?
+            .unwrap_or_else(|| "v1".to_string());
+        let source_type: SourceType = st_str.parse().unwrap_or_default();
+
         Ok(Archive {
             id: row.get(0)?,
             session_id: row.get(1)?,
@@ -1100,6 +1323,7 @@ impl KsmDatabase {
             tags,
             pruned: row.get::<_, i64>(8)? != 0,
             is_indexed: row.get::<_, i64>(9)? != 0,
+            source_type,
         })
     }
 

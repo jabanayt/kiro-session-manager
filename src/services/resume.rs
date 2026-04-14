@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::{KsmError, Result};
-use crate::models::{ArchiveStatus, Session, SessionMetadata};
+use crate::models::{ArchiveStatus, Session, SessionMetadata, SourceType};
 use crate::services::sessions;
 
 /// How the CLI/TUI identified the session to resume.
@@ -15,25 +15,26 @@ pub enum ResumeTarget {
 
 /// Result of resolving a resume target.
 pub enum ResumeResult {
-    /// Session found, timestamp updated, ready to launch kiro-cli.
+    /// Session found, ready to launch kiro-cli with explicit UI flag.
     Ready {
         session_id: String,
         display_name: String,
+        source_type: SourceType,
     },
-    /// Multiple sessions match a tag -- caller must pick one and retry with Index.
+    /// Multiple sessions match a tag. Caller must pick one and retry with Index.
     MultipleMatches {
         tag: String,
         matches: Vec<ResumeMatch>,
     },
-    /// Resume last -- no timestamp manipulation needed, just launch kiro-cli.
-    LaunchDirect,
+    // REMOVED: LaunchDirect variant no longer needed
 }
 
-/// A single match when resolving by tag (used in MultipleMatches).
+/// A single match when resolving by tag or name.
 pub struct ResumeMatch {
     pub session_id: String,
     pub original_index: usize,
     pub display_name: String,
+    pub source_type: SourceType,
 }
 
 /// Single entry point for resume operations.
@@ -48,7 +49,27 @@ pub fn resume(
     directory: &str,
 ) -> Result<ResumeResult> {
     match target {
-        ResumeTarget::Last => Ok(ResumeResult::LaunchDirect),
+        ResumeTarget::Last => {
+            let list_result = sessions::session_context(source, db, directory)?;
+            if list_result.all_sessions.is_empty() {
+                return Err(KsmError::SessionNotFound("No sessions found".to_string()));
+            }
+            // all_sessions is sorted by updated_at DESC, so [0] is most recent
+            let session = &list_result.all_sessions[0];
+            let display_name = list_result
+                .metadata
+                .get(&session.id)
+                .and_then(|m| m.name.clone())
+                .unwrap_or_else(|| session.preview.clone());
+
+            set_pending_reindex_if_indexed(&session.id, db, session.source_type)?;
+
+            Ok(ResumeResult::Ready {
+                session_id: session.id.clone(),
+                display_name,
+                source_type: session.source_type,
+            })
+        }
 
         ResumeTarget::Index(index) => {
             let list_result = sessions::session_context(source, db, directory)?;
@@ -61,12 +82,12 @@ pub fn resume(
                 .unwrap_or_else(|| session.preview.clone());
 
             // Set pending reindex if session is indexed
-            set_pending_reindex_if_indexed(&session.id, db)?;
+            set_pending_reindex_if_indexed(&session.id, db, session.source_type)?;
 
-            prepare_resume(&session.id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: session.id.clone(),
                 display_name,
+                source_type: session.source_type,
             })
         }
 
@@ -74,12 +95,12 @@ pub fn resume(
             let list_result = sessions::session_context(source, db, directory)?;
             let found = find_by_name(&name, &list_result.all_sessions, &list_result.metadata)?;
 
-            set_pending_reindex_if_indexed(&found.session_id, db)?;
+            set_pending_reindex_if_indexed(&found.session_id, db, found.source_type)?;
 
-            prepare_resume(&found.session_id, source)?;
             Ok(ResumeResult::Ready {
                 session_id: found.session_id,
                 display_name: found.display_name,
+                source_type: found.source_type,
             })
         }
 
@@ -92,12 +113,16 @@ pub fn resume(
                     tag
                 ))),
                 1 => {
-                    set_pending_reindex_if_indexed(&matches[0].session_id, db)?;
+                    set_pending_reindex_if_indexed(
+                        &matches[0].session_id,
+                        db,
+                        matches[0].source_type,
+                    )?;
 
-                    prepare_resume(&matches[0].session_id, source)?;
                     Ok(ResumeResult::Ready {
                         session_id: matches[0].session_id.clone(),
                         display_name: matches[0].display_name.clone(),
+                        source_type: matches[0].source_type,
                     })
                 }
                 _ => Ok(ResumeResult::MultipleMatches { tag, matches }),
@@ -107,9 +132,15 @@ pub fn resume(
 }
 
 /// Set pending_reindex if the session is indexed.
-fn set_pending_reindex_if_indexed(session_id: &str, db: &KsmDatabase) -> Result<()> {
-    if let Some(ArchiveStatus::Indexed { .. }) = db.get_archive_status(session_id)? {
-        db.set_pending_reindex(session_id)?;
+fn set_pending_reindex_if_indexed(
+    session_id: &str,
+    db: &KsmDatabase,
+    source_type: SourceType,
+) -> Result<()> {
+    if let Some(ArchiveStatus::Indexed { .. }) =
+        db.get_archive_status_for_source(session_id, source_type)?
+    {
+        db.set_pending_reindex(session_id, source_type)?;
     }
     Ok(())
 }
@@ -142,6 +173,7 @@ fn find_by_tag(
                 .get(&s.id)
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| s.preview.clone()),
+            source_type: s.source_type, // Get from session in iterator
         })
         .collect()
 }
@@ -166,16 +198,7 @@ fn find_by_name(
             session_id: s.id.clone(),
             original_index: idx,
             display_name: name.to_string(),
+            source_type: s.source_type, // Get from session in iterator
         })
         .ok_or_else(|| KsmError::SessionNotFound(format!("No session with name '{}'", name)))
-}
-
-/// Update a session's timestamp to now so kiro-cli's --resume picks it up.
-fn prepare_resume(session_id: &str, source: &dyn SessionSource) -> Result<()> {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    source.update_timestamp(session_id, timestamp)
 }
