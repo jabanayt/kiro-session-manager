@@ -2,6 +2,7 @@
 //!
 //! Provides cached session data for list display and chain detection.
 //! Automatically refreshes stale entries based on Kiro's updated_at timestamp.
+//! Skips ACP file scanning when directory mtime unchanged.
 
 use log::debug;
 use std::collections::{HashMap, HashSet};
@@ -13,7 +14,7 @@ use crate::models::CachedSession;
 /// Get all cached session data for a directory.
 ///
 /// Automatically refreshes stale entries (where Kiro's updated_at changed).
-/// Returns HashMap keyed by session_id for fast lookups.
+/// Skips ACP file scanning when ACP directory mtime is unchanged.
 pub fn sessions(
     source: &dyn SessionSource,
     db: &KsmDatabase,
@@ -21,19 +22,35 @@ pub fn sessions(
 ) -> Result<HashMap<String, CachedSession>> {
     debug!("Loading session cache for directory: {}", directory);
 
-    // 1. Get updated_at from Kiro DB (index-only scan, fast)
-    let updates = source.list_session_updates()?;
-    if updates.is_empty() {
-        debug!("No sessions found in Kiro DB");
-        return Ok(HashMap::new());
-    }
-    debug!("Found {} sessions in Kiro DB", updates.len());
+    // 1. Get v1 updates (always fast, SQLite index scan)
+    let v1_updates = source.list_session_updates_v1()?;
+    debug!("Found {} v1 sessions", v1_updates.len());
 
-    // 2. Load existing cache from ksm.db
+    // 2. Get v2 (ACP) session IDs - conditional on mtime
+    let acp_ids = get_acp_ids_cached(source, db, directory)?;
+    debug!("Found {} ACP sessions", acp_ids.len());
+
+    // 3. Load existing cache from ksm.db
     let mut cache = db.get_cached_sessions(directory)?;
     debug!("Loaded {} cached entries from ksm.db", cache.len());
 
-    // 3. Find stale/missing entries
+    // 4. Build combined update list
+    let mut updates: Vec<(String, i64)> = v1_updates;
+
+    // For ACP sessions, use cached timestamp or 0 to force cache miss.
+    // Timestamp 0 ensures new ACP sessions (not yet in cache) trigger a full
+    // conversation fetch, since no valid session has updated_at == 0.
+    for acp_id in &acp_ids {
+        let ts = cache.get(acp_id).map(|c| c.updated_at).unwrap_or(0);
+        updates.push((acp_id.clone(), ts));
+    }
+
+    if updates.is_empty() {
+        debug!("No sessions found");
+        return Ok(HashMap::new());
+    }
+
+    // 5. Find stale/missing entries
     let mut to_update = Vec::new();
     let mut hits = 0;
     let mut misses = 0;
@@ -41,16 +58,18 @@ pub fn sessions(
     for (session_id, updated_at) in &updates {
         if let Some(cached) = cache.get(session_id)
             && cached.updated_at == *updated_at
+            && *updated_at != 0
         {
             hits += 1;
-            continue; // Cache hit
+            continue;
         }
 
-        // Cache miss or stale - fetch full data including created_at
+        // Cache miss or stale
         misses += 1;
-        debug!("Cache miss: session {} (fetching from Kiro)", session_id);
+        debug!("Cache miss: session {}", session_id);
 
         let (conversation, created_at) = source.get_conversation_with_created_at(session_id)?;
+        let (_, actual_updated_at) = source.get_timestamps(session_id)?;
         let preview = conversation.preview();
         let msg_count = conversation.history.len() as u32;
         let has_compact_tag = extract_has_compact_tag(&conversation);
@@ -59,7 +78,7 @@ pub fn sessions(
         let cached = CachedSession {
             session_id: session_id.clone(),
             directory: directory.to_string(),
-            updated_at: *updated_at,
+            updated_at: actual_updated_at,
             created_at,
             preview,
             msg_count,
@@ -74,26 +93,43 @@ pub fn sessions(
 
     debug!("Cache: {} hits, {} misses", hits, misses);
 
-    // 4. Write updates to ksm.db
+    // 6. Write updates to ksm.db
     if !to_update.is_empty() {
         db.set_cached_sessions(&to_update)?;
         debug!("Updated {} stale cache entries", to_update.len());
     }
 
-    // 5. Filter to only sessions that exist in Kiro
+    // 7. Filter to only sessions that exist
     let live_ids: HashSet<_> = updates.iter().map(|(id, _)| id.clone()).collect();
     cache.retain(|id, _| live_ids.contains(id));
-
-    // 6. Always refresh source_type from routing (handles stale cache entries
-    //    that predate the source_type field, e.g. after upgrading ksm)
-    for (session_id, cached) in cache.iter_mut() {
-        cached.source_type = source.session_source_type(session_id);
-    }
 
     Ok(cache)
 }
 
-/// Remove cache entries for sessions that no longer exist in Kiro.
+/// Get ACP session IDs, using cached list if mtime unchanged.
+fn get_acp_ids_cached(
+    source: &dyn SessionSource,
+    db: &KsmDatabase,
+    directory: &str,
+) -> Result<Vec<String>> {
+    let Some(current_mtime) = source.acp_dir_mtime() else {
+        return Ok(Vec::new());
+    };
+
+    if let Some((cached_mtime, cached_ids)) = db.get_acp_cache(directory)?
+        && cached_mtime == current_mtime
+    {
+        debug!("ACP cache hit (mtime unchanged)");
+        return Ok(cached_ids);
+    }
+
+    debug!("ACP cache miss (scanning directory)");
+    let ids = source.list_acp_session_ids()?;
+    db.set_acp_cache(directory, current_mtime, &ids)?;
+    Ok(ids)
+}
+
+/// Remove cache entries for sessions that no longer exist.
 ///
 /// Called under auto_clean config setting.
 pub fn clean_stale(

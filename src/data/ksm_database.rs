@@ -85,6 +85,7 @@ impl KsmDatabase {
             self.migrate_v2_to_v3(&conn)?;
             self.migrate_v3_to_v4(&conn)?;
             self.migrate_v4_to_v5(&conn)?;
+            self.migrate_v5_to_v6(&conn)?;
         } else {
             let version: i64 = conn
                 .prepare("SELECT version FROM schema_version")?
@@ -96,23 +97,30 @@ impl KsmDatabase {
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 2 => {
                     self.migrate_v2_to_v3(&conn)?;
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 3 => {
                     self.migrate_v3_to_v4(&conn)?;
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
                 4 => {
                     self.migrate_v4_to_v5(&conn)?;
+                    self.migrate_v5_to_v6(&conn)?;
                 }
-                5 => {} // Current version
+                5 => {
+                    self.migrate_v5_to_v6(&conn)?;
+                }
+                6 => {} // Current version
                 _ => {
                     return Err(KsmError::SchemaVersionMismatch {
-                        expected: 5,
+                        expected: 6,
                         found: version,
                     });
                 }
@@ -320,6 +328,25 @@ impl KsmDatabase {
         tx.execute("UPDATE schema_version SET version = 5", [])?;
         tx.commit()?;
         debug!("Migrated schema from version 4 to version 5");
+        Ok(())
+    }
+
+    fn migrate_v5_to_v6(&self, conn: &Connection) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS acp_cache (
+                directory TEXT PRIMARY KEY,
+                dir_mtime_secs INTEGER NOT NULL,
+                dir_mtime_nanos INTEGER NOT NULL,
+                session_ids TEXT NOT NULL DEFAULT '[]'
+            );
+
+            UPDATE schema_version SET version = 6;",
+        )?;
+
+        tx.commit()?;
+        debug!("Migrated schema from version 5 to version 6");
         Ok(())
     }
 
@@ -777,6 +804,67 @@ impl KsmDatabase {
         }
 
         Ok(deleted)
+    }
+
+    // ========== ACP Cache Methods ==========
+
+    /// Get cached ACP directory mtime and session IDs.
+    pub fn get_acp_cache(
+        &self,
+        directory: &str,
+    ) -> Result<Option<(std::time::SystemTime, Vec<String>)>> {
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT dir_mtime_secs, dir_mtime_nanos, session_ids
+             FROM acp_cache WHERE directory = ?",
+        )?;
+
+        let result = stmt.query_row([directory], |row| {
+            let secs: i64 = row.get(0)?;
+            let nanos: u32 = row.get(1)?;
+            let ids_json: String = row.get(2)?;
+            Ok((secs, nanos, ids_json))
+        });
+
+        match result {
+            Ok((secs, nanos, ids_json)) => {
+                let mtime = std::time::UNIX_EPOCH + std::time::Duration::new(secs as u64, nanos);
+                let ids: Vec<String> = serde_json::from_str(&ids_json).unwrap_or_default();
+                Ok(Some((mtime, ids)))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(KsmError::Database(e.to_string())),
+        }
+    }
+
+    /// Set cached ACP directory mtime and session IDs.
+    pub fn set_acp_cache(
+        &self,
+        directory: &str,
+        mtime: std::time::SystemTime,
+        session_ids: &[String],
+    ) -> Result<()> {
+        let conn = self.open()?;
+        let duration = mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let ids_json = serde_json::to_string(session_ids)?;
+
+        conn.execute(
+            "INSERT INTO acp_cache (directory, dir_mtime_secs, dir_mtime_nanos, session_ids)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(directory) DO UPDATE SET
+                dir_mtime_secs = ?2,
+                dir_mtime_nanos = ?3,
+                session_ids = ?4",
+            rusqlite::params![
+                directory,
+                duration.as_secs() as i64,
+                duration.subsec_nanos(),
+                ids_json
+            ],
+        )?;
+        Ok(())
     }
 
     // ========== Archive Methods ==========

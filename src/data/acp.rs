@@ -42,7 +42,7 @@ impl AcpSource {
     }
 
     /// Read and parse the .json metadata file for a session.
-    fn read_meta(&self, session_id: &str) -> Result<AcpMeta> {
+    pub(crate) fn read_meta(&self, session_id: &str) -> Result<AcpMeta> {
         let path = self.json_path(session_id);
         let content = std::fs::read_to_string(&path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -52,7 +52,7 @@ impl AcpSource {
     }
 
     /// List all session IDs whose .json files exist in the sessions dir.
-    fn all_ids(&self) -> Vec<String> {
+    pub(crate) fn all_ids(&self) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(&self.sessions_dir) else {
             return Vec::new();
         };
@@ -64,18 +64,28 @@ impl AcpSource {
             })
             .collect()
     }
+
+    /// Get the sessions directory mtime for cache validation.
+    pub fn dir_mtime(&self) -> Result<std::time::SystemTime> {
+        Ok(std::fs::metadata(&self.sessions_dir)?.modified()?)
+    }
+
+    /// Check if a session exists in ACP storage.
+    pub fn has_session(&self, session_id: &str) -> bool {
+        self.json_path(session_id).exists()
+    }
 }
 
 // --- Serde types for .json metadata ---
 
 #[derive(Deserialize)]
-struct AcpMeta {
-    session_id: String,
-    cwd: String,
-    created_at: String, // ISO 8601
-    updated_at: String, // ISO 8601
+pub(crate) struct AcpMeta {
+    pub(crate) session_id: String,
+    pub(crate) cwd: String,
+    pub(crate) created_at: String, // ISO 8601
+    pub(crate) updated_at: String, // ISO 8601
     #[serde(default)]
-    title: Option<String>,
+    pub(crate) title: Option<String>,
 }
 
 // --- Serde types for .jsonl events ---

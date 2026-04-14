@@ -56,6 +56,24 @@ pub trait SessionSource {
     fn session_source_type(&self, _session_id: &str) -> SourceType {
         self.source_type()
     }
+
+    /// Get ACP directory mtime for cache validation.
+    /// Returns None for sources without ACP sessions.
+    fn acp_dir_mtime(&self) -> Option<std::time::SystemTime> {
+        None
+    }
+
+    /// List session updates from legacy (v1) storage only.
+    /// Used by cache when ACP mtime unchanged.
+    fn list_session_updates_v1(&self) -> Result<Vec<(String, i64)>> {
+        self.list_session_updates() // Default: same as full list
+    }
+
+    /// List session IDs from ACP (v2) storage only.
+    /// Returns just IDs (not timestamps) for cache key tracking.
+    fn list_acp_session_ids(&self) -> Result<Vec<String>> {
+        Ok(Vec::new()) // Default: no ACP sessions
+    }
 }
 
 /// Hybrid session source: tries database first, falls back to CLI parsing.
@@ -84,11 +102,7 @@ impl HybridSource {
     /// Determine which source owns a session ID by checking ACP first (file existence),
     /// then falling back to legacy.
     fn route(&self, session_id: &str) -> &dyn SessionSource {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let json_path = std::path::PathBuf::from(home)
-            .join(".kiro/sessions/cli")
-            .join(format!("{}.json", session_id));
-        if json_path.exists() {
+        if self.acp.has_session(session_id) {
             &self.acp
         } else {
             &self.database
@@ -159,5 +173,26 @@ impl SessionSource for HybridSource {
 
     fn session_source_type(&self, session_id: &str) -> SourceType {
         self.route(session_id).source_type()
+    }
+
+    fn acp_dir_mtime(&self) -> Option<std::time::SystemTime> {
+        self.acp.dir_mtime().ok()
+    }
+
+    fn list_session_updates_v1(&self) -> Result<Vec<(String, i64)>> {
+        self.database.list_session_updates()
+    }
+
+    fn list_acp_session_ids(&self) -> Result<Vec<String>> {
+        let current_dir = std::env::current_dir()?.display().to_string();
+        let mut ids = Vec::new();
+        for id in self.acp.all_ids() {
+            if let Ok(meta) = self.acp.read_meta(&id)
+                && meta.cwd == current_dir
+            {
+                ids.push(meta.session_id);
+            }
+        }
+        Ok(ids)
     }
 }
