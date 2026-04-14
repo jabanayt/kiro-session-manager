@@ -20,9 +20,15 @@ impl Default for KiroDatabase {
 impl KiroDatabase {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_default();
-        KiroDatabase {
-            db_path: PathBuf::from(home).join(".local/share/kiro-cli/data.sqlite3"),
-        }
+        let home = PathBuf::from(home);
+
+        #[cfg(target_os = "macos")]
+        let db_path = home.join("Library/Application Support/kiro-cli/data.sqlite3");
+
+        #[cfg(not(target_os = "macos"))]
+        let db_path = home.join(".local/share/kiro-cli/data.sqlite3");
+
+        KiroDatabase { db_path }
     }
 
     /// Open read-only connection to kiro-cli's database.
@@ -237,7 +243,13 @@ impl SessionSource for KiroDatabase {
 
     fn delete_session(&self, session_id: &str, _source_type: SourceType) -> Result<()> {
         let output = std::process::Command::new("kiro-cli")
-            .args(["chat", "--delete-session", session_id, "--session-source", "v1"])
+            .args([
+                "chat",
+                "--delete-session",
+                session_id,
+                "--session-source",
+                "v1",
+            ])
             .output()?;
 
         if !output.status.success() {

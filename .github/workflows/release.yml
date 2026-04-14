@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-linux:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -34,6 +34,62 @@ jobs:
 
       - name: Package ARM64 binary
         run: tar czf ksm-linux-aarch64.tar.gz -C target/aarch64-unknown-linux-gnu/release ksm
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: |
+            ksm-linux-x86_64.tar.gz
+            ksm-linux-aarch64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Build ARM64 binary (native)
+        run: cargo build --release
+
+      - name: Build x86_64 binary (cross-compile)
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Package ARM64 binary
+        run: tar czf ksm-macos-aarch64.tar.gz -C target/release ksm
+
+      - name: Package x86_64 binary
+        run: tar czf ksm-macos-x86_64.tar.gz -C target/x86_64-apple-darwin/release ksm
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: |
+            ksm-macos-aarch64.tar.gz
+            ksm-macos-x86_64.tar.gz
+
+  release:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-binaries
 
       - name: Extract version from tag
         id: version
@@ -63,3 +119,5 @@ jobs:
           files: |
             ksm-linux-x86_64.tar.gz
             ksm-linux-aarch64.tar.gz
+            ksm-macos-aarch64.tar.gz
+            ksm-macos-x86_64.tar.gz
