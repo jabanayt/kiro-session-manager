@@ -62,7 +62,7 @@ pub fn resume(
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| session.preview.clone());
 
-            set_pending_reindex_if_indexed(&session.id, db)?;
+            set_pending_reindex_if_indexed(&session.id, db, session.source_type)?;
 
             Ok(ResumeResult::Ready {
                 session_id: session.id.clone(),
@@ -82,7 +82,7 @@ pub fn resume(
                 .unwrap_or_else(|| session.preview.clone());
 
             // Set pending reindex if session is indexed
-            set_pending_reindex_if_indexed(&session.id, db)?;
+            set_pending_reindex_if_indexed(&session.id, db, session.source_type)?;
 
             Ok(ResumeResult::Ready {
                 session_id: session.id.clone(),
@@ -95,7 +95,7 @@ pub fn resume(
             let list_result = sessions::session_context(source, db, directory)?;
             let found = find_by_name(&name, &list_result.all_sessions, &list_result.metadata)?;
 
-            set_pending_reindex_if_indexed(&found.session_id, db)?;
+            set_pending_reindex_if_indexed(&found.session_id, db, found.source_type)?;
 
             Ok(ResumeResult::Ready {
                 session_id: found.session_id,
@@ -113,7 +113,11 @@ pub fn resume(
                     tag
                 ))),
                 1 => {
-                    set_pending_reindex_if_indexed(&matches[0].session_id, db)?;
+                    set_pending_reindex_if_indexed(
+                        &matches[0].session_id,
+                        db,
+                        matches[0].source_type,
+                    )?;
 
                     Ok(ResumeResult::Ready {
                         session_id: matches[0].session_id.clone(),
@@ -128,9 +132,15 @@ pub fn resume(
 }
 
 /// Set pending_reindex if the session is indexed.
-fn set_pending_reindex_if_indexed(session_id: &str, db: &KsmDatabase) -> Result<()> {
-    if let Some(ArchiveStatus::Indexed { .. }) = db.get_archive_status(session_id)? {
-        db.set_pending_reindex(session_id)?;
+fn set_pending_reindex_if_indexed(
+    session_id: &str,
+    db: &KsmDatabase,
+    source_type: SourceType,
+) -> Result<()> {
+    if let Some(ArchiveStatus::Indexed { .. }) =
+        db.get_archive_status_for_source(session_id, source_type)?
+    {
+        db.set_pending_reindex(session_id, source_type)?;
     }
     Ok(())
 }

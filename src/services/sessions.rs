@@ -14,8 +14,8 @@ pub struct SessionContext {
     pub all_sessions: Vec<Session>,
     pub metadata: HashMap<String, SessionMetadata>,
     pub auto_linked: usize,
-    /// Session IDs that are indexed (for display markers).
-    pub indexed_session_ids: Vec<String>,
+    /// Session IDs that are indexed (for display markers), with source type.
+    pub indexed_session_ids: Vec<(String, SourceType)>,
     pub cache: HashMap<(String, SourceType), CachedSession>,
     /// Tags that fail validation, as (session_index, tag_name) pairs.
     pub invalid_tag_warnings: Vec<(usize, String)>,
@@ -59,7 +59,10 @@ pub fn session_context(
     };
 
     let indexed = db.list_indexed(directory)?;
-    let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
+    let indexed_session_ids: Vec<(String, SourceType)> = indexed
+        .iter()
+        .map(|a| (a.session_id.clone(), a.source_type))
+        .collect();
 
     let invalid_tag_warnings: Vec<(usize, String)> = sessions
         .iter()

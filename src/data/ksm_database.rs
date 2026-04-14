@@ -332,6 +332,9 @@ impl KsmDatabase {
     }
 
     fn migrate_v5_to_v6(&self, conn: &Connection) -> Result<()> {
+        // Must be outside transaction per SQLite rules
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
         let tx = conn.unchecked_transaction()?;
 
         tx.execute_batch(
@@ -359,10 +362,39 @@ impl KsmDatabase {
 
             CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory);
 
+            ALTER TABLE archives ADD COLUMN source_type TEXT NOT NULL DEFAULT 'v1';
+
+            CREATE TABLE archives_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                message_count INTEGER NOT NULL,
+                session_created_at INTEGER NOT NULL,
+                archived_at INTEGER NOT NULL,
+                tags TEXT,
+                pruned BOOLEAN NOT NULL DEFAULT FALSE,
+                is_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+                source_type TEXT NOT NULL DEFAULT 'v1',
+                UNIQUE(session_id, source_type)
+            );
+
+            INSERT INTO archives_new SELECT * FROM archives;
+
+            DROP TABLE archives;
+
+            ALTER TABLE archives_new RENAME TO archives;
+
+            CREATE INDEX IF NOT EXISTS idx_archives_directory ON archives(directory);
+            CREATE INDEX IF NOT EXISTS idx_archives_name ON archives(name);
+
             UPDATE schema_version SET version = 6;",
         )?;
 
         tx.commit()?;
+
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
         debug!("Migrated schema from version 5 to version 6");
         Ok(())
     }
@@ -715,9 +747,11 @@ impl KsmDatabase {
         Ok(())
     }
 
-    /// Set pending reindex for a session.
-    pub fn set_pending_reindex(&self, session_id: &str) -> Result<()> {
-        self.set_state(STATE_PENDING_REINDEX, session_id)
+    /// Set pending reindex for a session with its source type.
+    /// Stores as "session_id:source_type" (e.g. "abc-123:v1").
+    pub fn set_pending_reindex(&self, session_id: &str, source_type: SourceType) -> Result<()> {
+        let value = format!("{}:{}", session_id, source_type.as_str());
+        self.set_state(STATE_PENDING_REINDEX, &value)
     }
 
     /// Clear pending reindex.
@@ -725,9 +759,20 @@ impl KsmDatabase {
         self.clear_state(STATE_PENDING_REINDEX)
     }
 
-    /// Get pending reindex session ID.
-    pub fn get_pending_reindex(&self) -> Result<Option<String>> {
-        self.get_state(STATE_PENDING_REINDEX)
+    /// Get pending reindex session ID and source type.
+    pub fn get_pending_reindex(&self) -> Result<Option<(String, SourceType)>> {
+        match self.get_state(STATE_PENDING_REINDEX)? {
+            Some(value) => {
+                if let Some((id, st_str)) = value.rsplit_once(':') {
+                    let st: SourceType = st_str.parse().unwrap_or_default();
+                    Ok(Some((id.to_string(), st)))
+                } else {
+                    // Legacy format (just session_id), default to Legacy
+                    Ok(Some((value, SourceType::Legacy)))
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     // ========== Session Cache Methods ==========
@@ -906,27 +951,68 @@ impl KsmDatabase {
 
     // ========== Archive Methods ==========
 
-    /// Check archive/index status of a session.
+    /// Check archive/index status of a session (any source type).
     pub fn get_archive_status(&self, session_id: &str) -> Result<Option<ArchiveStatus>> {
         let conn = self.open()?;
         match conn
-            .prepare("SELECT id, name, is_indexed FROM archives WHERE session_id = ?")?
+            .prepare("SELECT id, name, is_indexed, source_type FROM archives WHERE session_id = ?")?
             .query_row([session_id], |row| {
                 let id: i64 = row.get(0)?;
                 let name: String = row.get(1)?;
                 let is_indexed: bool = row.get::<_, i64>(2)? != 0;
-                Ok((id, name, is_indexed))
+                let st_str: String = row.get(3)?;
+                Ok((id, name, is_indexed, st_str))
             }) {
-            Ok((id, name, is_indexed)) => {
+            Ok((id, name, is_indexed, st_str)) => {
+                let st: SourceType = st_str.parse().unwrap_or_default();
                 if is_indexed {
                     Ok(Some(ArchiveStatus::Indexed {
                         name,
                         archive_id: id,
+                        source_type: st,
                     }))
                 } else {
                     Ok(Some(ArchiveStatus::Archived {
                         name,
                         archive_id: id,
+                        source_type: st,
+                    }))
+                }
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Check archive/index status of a session for a specific source type.
+    pub fn get_archive_status_for_source(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<Option<ArchiveStatus>> {
+        let conn = self.open()?;
+        match conn
+            .prepare("SELECT id, name, is_indexed, source_type FROM archives WHERE session_id = ? AND source_type = ?")?
+            .query_row(rusqlite::params![session_id, source_type.as_str()], |row| {
+                let id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let is_indexed: bool = row.get::<_, i64>(2)? != 0;
+                let st_str: String = row.get(3)?;
+                Ok((id, name, is_indexed, st_str))
+            }) {
+            Ok((id, name, is_indexed, st_str)) => {
+                let st: SourceType = st_str.parse().unwrap_or_default();
+                if is_indexed {
+                    Ok(Some(ArchiveStatus::Indexed {
+                        name,
+                        archive_id: id,
+                        source_type: st,
+                    }))
+                } else {
+                    Ok(Some(ArchiveStatus::Archived {
+                        name,
+                        archive_id: id,
+                        source_type: st,
                     }))
                 }
             }
@@ -953,8 +1039,8 @@ impl KsmDatabase {
 
         let archive_id = {
             let insert_result = tx.execute(
-                "INSERT INTO archives (session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO archives (session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     archive.session_id,
                     archive.name,
@@ -965,6 +1051,7 @@ impl KsmDatabase {
                     tags_json,
                     archive.pruned,
                     is_indexed,
+                    archive.source_type.as_str(),
                 ],
             );
 
@@ -974,8 +1061,13 @@ impl KsmDatabase {
                     if err.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
                     let existing_name: String = conn
-                        .prepare("SELECT name FROM archives WHERE session_id = ?")?
-                        .query_row([&archive.session_id], |row| row.get(0))
+                        .prepare(
+                            "SELECT name FROM archives WHERE session_id = ? AND source_type = ?",
+                        )?
+                        .query_row(
+                            rusqlite::params![&archive.session_id, archive.source_type.as_str()],
+                            |row| row.get(0),
+                        )
                         .unwrap_or_else(|_| "unknown".to_string());
                     return Err(KsmError::AlreadyArchived(existing_name));
                 }
@@ -1107,7 +1199,7 @@ impl KsmDatabase {
     pub fn get_archive(&self, name: &str, directory: &str) -> Result<Archive> {
         let conn = self.open()?;
         conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE name = ? AND directory = ?",
         )?
         .query_row(rusqlite::params![name, directory], |row| {
@@ -1123,7 +1215,7 @@ impl KsmDatabase {
     pub fn get_archive_by_id(&self, archive_id: i64) -> Result<Archive> {
         let conn = self.open()?;
         conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE id = ?",
         )?
         .query_row([archive_id], Self::row_to_archive)
@@ -1165,7 +1257,7 @@ impl KsmDatabase {
     pub fn list_archives(&self, directory: &str) -> Result<Vec<Archive>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE directory = ? AND is_indexed = FALSE ORDER BY archived_at DESC",
         )?;
 
@@ -1182,7 +1274,7 @@ impl KsmDatabase {
     pub fn list_indexed(&self, directory: &str) -> Result<Vec<Archive>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed
+            "SELECT id, session_id, name, directory, message_count, session_created_at, archived_at, tags, pruned, is_indexed, source_type
              FROM archives WHERE directory = ? AND is_indexed = TRUE ORDER BY archived_at DESC",
         )?;
 
@@ -1215,6 +1307,11 @@ impl KsmDatabase {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
 
+        let st_str: String = row
+            .get::<_, Option<String>>(10)?
+            .unwrap_or_else(|| "v1".to_string());
+        let source_type: SourceType = st_str.parse().unwrap_or_default();
+
         Ok(Archive {
             id: row.get(0)?,
             session_id: row.get(1)?,
@@ -1226,6 +1323,7 @@ impl KsmDatabase {
             tags,
             pruned: row.get::<_, i64>(8)? != 0,
             is_indexed: row.get::<_, i64>(9)? != 0,
+            source_type,
         })
     }
 

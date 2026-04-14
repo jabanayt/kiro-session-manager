@@ -153,8 +153,12 @@ fn get_tags(session_id: &str, metadata: &HashMap<String, SessionMetadata>) -> Ve
 }
 
 /// Check if session is indexed.
-fn is_indexed(session_id: &str, indexed_ids: &[String]) -> bool {
-    indexed_ids.contains(&session_id.to_string())
+fn is_indexed(
+    session_id: &str,
+    source_type: SourceType,
+    indexed_ids: &[(String, SourceType)],
+) -> bool {
+    indexed_ids.contains(&(session_id.to_string(), source_type))
 }
 
 /// Get parent index if session has a parent.
@@ -178,7 +182,7 @@ pub fn print_session_list(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
     visible_indices: &[usize],
-    indexed_session_ids: &[String],
+    indexed_session_ids: &[(String, SourceType)],
     show_parents: bool,
 ) {
     if visible_indices.is_empty() {
@@ -230,7 +234,7 @@ pub fn print_session_list(
         let session = &sessions[idx];
         let name = get_display_name(session, metadata);
         let tags = get_tags(&session.id, metadata);
-        let indexed = is_indexed(&session.id, indexed_session_ids);
+        let indexed = is_indexed(&session.id, session.source_type, indexed_session_ids);
         let parent_idx = get_parent_index(&session.id, metadata, sessions);
 
         // Build display name with chain link (only when not showing parent tree)
@@ -363,9 +367,11 @@ pub fn print_session_list(
     }
 
     // Legend
-    let has_indexed = indexed_session_ids
-        .iter()
-        .any(|id| visible_indices.iter().any(|&idx| &sessions[idx].id == id));
+    let has_indexed = indexed_session_ids.iter().any(|(id, st)| {
+        visible_indices
+            .iter()
+            .any(|&idx| &sessions[idx].id == id && sessions[idx].source_type == *st)
+    });
 
     if has_indexed {
         println!();

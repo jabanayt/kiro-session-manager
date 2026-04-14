@@ -352,7 +352,11 @@ impl SessionSource for AcpSource {
         Ok(updates)
     }
 
-    fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
+    fn get_conversation(
+        &self,
+        session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<ConversationData> {
         let jsonl_path = self.jsonl_path(session_id);
         let content = std::fs::read_to_string(&jsonl_path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -362,30 +366,36 @@ impl SessionSource for AcpSource {
     fn get_conversation_with_created_at(
         &self,
         session_id: &str,
+        source_type: SourceType,
     ) -> Result<(ConversationData, i64)> {
         let meta = self.read_meta(session_id)?;
         let created_at = iso_to_ms(&meta.created_at)?;
-        let conv = self.get_conversation(session_id)?;
+        let conv = self.get_conversation(session_id, source_type)?;
         Ok((conv, created_at))
     }
 
-    fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
+    fn get_message_ids(&self, session_id: &str, _source_type: SourceType) -> Result<Vec<String>> {
         let jsonl_path = self.jsonl_path(session_id);
         let content = std::fs::read_to_string(&jsonl_path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
         Ok(extract_message_ids_from_jsonl(&content))
     }
 
-    fn has_compact_tag(&self, _session_id: &str) -> Result<bool> {
+    fn has_compact_tag(&self, _session_id: &str, _source_type: SourceType) -> Result<bool> {
         Ok(false) // ACP sessions don't use the Compact tag mechanism
     }
 
-    fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
+    fn get_timestamps(&self, session_id: &str, _source_type: SourceType) -> Result<(i64, i64)> {
         let meta = self.read_meta(session_id)?;
         Ok((iso_to_ms(&meta.created_at)?, iso_to_ms(&meta.updated_at)?))
     }
 
-    fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
+    fn update_timestamp(
+        &self,
+        session_id: &str,
+        timestamp: i64,
+        _source_type: SourceType,
+    ) -> Result<()> {
         let path = self.json_path(session_id);
         let content = std::fs::read_to_string(&path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -408,7 +418,7 @@ impl SessionSource for AcpSource {
     ///
     /// Uses `kiro-cli chat --delete-session <id> --session-source v2` to ensure
     /// proper cleanup consistent with kiro-cli's expectations.
-    fn delete_session(&self, session_id: &str) -> Result<()> {
+    fn delete_session(&self, session_id: &str, _source_type: SourceType) -> Result<()> {
         let output = std::process::Command::new("kiro-cli")
             .args([
                 "chat",

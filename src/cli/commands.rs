@@ -869,8 +869,8 @@ fn cmd_detect_links(
                 ))
             );
 
-            // Hint if parent is indexed
-            if indexed_session_ids.contains(&candidate.parent_id) {
+            // Hint if parent is indexed (chains are v1-only)
+            if indexed_session_ids.contains(&(candidate.parent_id.clone(), SourceType::Legacy)) {
                 println!(
                     "  [{}] is searchable. To search this compacted session too: ksm index {}",
                     parent_idx, child_idx
@@ -965,15 +965,7 @@ fn cmd_archive(
         }
     };
 
-    let result = archive::archive_session(
-        &session.id,
-        &name,
-        tags,
-        session.created_at,
-        directory,
-        source,
-        db,
-    )?;
+    let result = archive::archive_session(session, &name, tags, directory, source, db)?;
 
     let mut msg = format!("Archived [{}] as '{}'", index, result.archive_name);
     if result.pruned {
@@ -1066,15 +1058,7 @@ fn cmd_index(
         }
     };
 
-    let result = archive::index_session(
-        &session.id,
-        &name,
-        tags,
-        session.created_at,
-        directory,
-        source,
-        db,
-    )?;
+    let result = archive::index_session(session, &name, tags, directory, source, db)?;
 
     println!(
         "{}",
@@ -1097,7 +1081,7 @@ fn cmd_reindex(
         sessions::validate_index(idx, list_result.all_sessions.len())?;
         let session = &list_result.all_sessions[idx];
 
-        let result = match archive::reindex_session(&session.id, source, db) {
+        let result = match archive::reindex_session(&session.id, source, db, session.source_type) {
             Ok(r) => r,
             Err(KsmError::NotIndexed(_)) => {
                 println!(
@@ -1180,7 +1164,7 @@ fn cmd_unindex(
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
-    match archive::unindex_session(&session.id, db) {
+    match archive::unindex_session(&session.id, db, session.source_type) {
         Ok(result) => {
             println!(
                 "{}",
@@ -1285,6 +1269,7 @@ fn cmd_delete(
                 &mut meta,
                 source,
                 db,
+                session.source_type,
             )?;
 
             let regular_count = result.deleted_ids.len() - result.indexed_count;
@@ -1336,9 +1321,9 @@ fn cmd_delete(
         }
     }
 
-    let ids: Vec<String> = indices
+    let ids: Vec<(String, SourceType)> = indices
         .iter()
-        .map(|&i| all_sessions[i].id.clone())
+        .map(|&i| (all_sessions[i].id.clone(), all_sessions[i].source_type))
         .collect();
     let result = delete::delete_sessions(&ids, source, &mut meta, db)?;
 

@@ -75,8 +75,8 @@ pub fn sessions(
         debug!("Cache miss: session {}", session_id);
 
         let (conversation, created_at) =
-            source.get_conversation_for_source(session_id, *source_type)?;
-        let (_, actual_updated_at) = source.get_timestamps_for_source(session_id, *source_type)?;
+            source.get_conversation_with_created_at(session_id, *source_type)?;
+        let (_, actual_updated_at) = source.get_timestamps(session_id, *source_type)?;
         let preview = conversation.preview();
         let msg_count = conversation.history.len() as u32;
         let has_compact_tag = extract_has_compact_tag(&conversation);
