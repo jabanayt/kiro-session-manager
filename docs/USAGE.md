@@ -40,7 +40,7 @@ Output:
 Each line shows:
 - Index number (used by other commands)
 - `[i]` marker if session is indexed (searchable)
-- `v1` or `v2` version marker (`v1` = legacy chat session, `v2` = ACP/editor session)
+- `v1` or `v2` version marker (`v1` = legacy chat session, `v2` = TUI/ACP/editor session)
 - Session name or first message preview
 - Time since last activity (compact format: s, m, h, d, w)
 - Message count
@@ -48,7 +48,7 @@ Each line shows:
 
 ### TUI/ACP Sessions
 
-Sessions created through editor integrations (JetBrains, Zed) or `kiro-cli acp` are stored as file pairs at `~/.kiro/sessions/cli/` rather than in kiro-cli's SQLite database. These sessions are shown with a `v2` marker and support all the same commands as regular sessions: delete, resume, name, tag, archive, index, and search.
+Sessions created through editor integrations (JetBrains, Zed) or `kiro-cli acp` are stored as file pairs at `~/.kiro/sessions/cli/` rather than in kiro-cli's SQLite database. These sessions are shown with a `v2` marker and support all the same commands as regular sessions.
 
 ### Show Full Parent Chain
 
@@ -108,6 +108,15 @@ ksm r --name "Project Planning"
 ```
 
 Matches the exact session name.
+
+### Force TUI Mode
+
+```bash
+ksm r 0 --tui
+ksm r --last --tui
+```
+
+By default, v1 sessions open in the legacy UI and v2 sessions open in the TUI. Use `--tui` to force any session to open in the TUI.
 
 ## Deleting Sessions
 
