@@ -4,21 +4,35 @@
 
 Download the latest release from the [Releases page](https://github.com/jabanayt/kiro-session-manager/releases).
 
+Available binaries:
+
+| File | Platform |
+|------|----------|
+| `ksm-linux-x86_64.tar.gz` | Linux (Intel/AMD) |
+| `ksm-linux-aarch64.tar.gz` | Linux (ARM64) |
+| `ksm-macos-x86_64.tar.gz` | macOS (Intel) |
+| `ksm-macos-aarch64.tar.gz` | macOS (Apple Silicon) |
+
 Extract and place in your PATH:
 
 ```bash
+# Linux
 tar xzf ksm-linux-<arch>.tar.gz
 cp ksm ~/.local/bin/
+
+# macOS
+tar xzf ksm-macos-<arch>.tar.gz
+cp ksm /usr/local/bin/
 ```
 
 Or run directly without installing:
 
 ```bash
-tar xzf ksm-linux-<arch>.tar.gz
+tar xzf ksm-<platform>-<arch>.tar.gz
 ./ksm list
 ```
 
-If the binary fails with a GLIBC version error, your system's C library is older than the build target. Use Option 2 to compile from source instead.
+Linux only: if the binary fails with a GLIBC version error, your system's C library is older than the build target. Use Option 2 to compile from source instead.
 
 ## Option 2: Build from Source
 
@@ -49,7 +63,11 @@ cargo build --release
 The binary is at `target/release/ksm`. Place it in your PATH:
 
 ```bash
+# Linux
 cp target/release/ksm ~/.local/bin/
+
+# macOS
+cp target/release/ksm /usr/local/bin/
 ```
 
 ## Verifying Installation
@@ -60,20 +78,24 @@ ksm -V        # or --version
 
 ## Requirements
 
-- Linux (x86_64 or ARM64)
+- Linux (x86_64 or ARM64) or macOS (Apple Silicon or Intel)
 - kiro-cli installed and in PATH
 
 ## PATH Setup
 
-If `~/.local/bin/` is not in your PATH, add it to your shell profile:
+If the install location is not in your PATH:
 
 ```bash
-# Add to ~/.bashrc or ~/.zshrc
+# Linux: add to ~/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
+
+# macOS: add to ~/.zshrc or ~/.bash_profile
+export PATH="/usr/local/bin:$PATH"
 ```
 
 Then reload your shell:
 
 ```bash
-source ~/.bashrc
+source ~/.bashrc          # Linux
+source ~/.zshrc           # macOS
 ```

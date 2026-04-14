@@ -71,10 +71,8 @@ See [Usage Guide](docs/USAGE.md) for all commands and features.
 
 ## Requirements
 
-- Linux (x86_64 or ARM64)
+- Linux (x86_64 or ARM64) or macOS (Apple Silicon or Intel)
 - kiro-cli installed and in PATH
-
-MacOS is not currently supported. The database path is hardcoded to the Linux location. MacOS support is planned for a future release.
 
 ## Development
 
