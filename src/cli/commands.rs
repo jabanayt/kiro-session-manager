@@ -1325,7 +1325,7 @@ fn cmd_delete(
         .iter()
         .map(|&i| (all_sessions[i].id.clone(), all_sessions[i].source_type))
         .collect();
-    let result = delete::delete_sessions(&ids, source, &mut meta, db)?;
+    let result = delete::delete_sessions(&ids, &all_sessions, source, &mut meta, db)?;
 
     let regular_count = result.deleted_ids.len() - result.indexed_count;
     if regular_count > 0 {
