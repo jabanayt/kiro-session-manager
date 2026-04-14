@@ -7,12 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-04-14
+
 ### Added
 
-- Support for TUI/ACP sessions stored at `~/.kiro/sessions/cli/` (created via `kiro-cli acp` or JetBrains/Zed editor integrations)
-- ACP sessions appear merged with legacy sessions in `ksm list`, sorted by last activity
-- `v1`/`v2` column marker on every session: `v1` for legacy chat sessions, `v2` for ACP/editor sessions
-- All commands (delete, resume, name, tag, untag, archive, index, search, chain detection) work on ACP sessions
+- Support for TUI/ACP sessions stored at ~/.kiro/sessions/cli/ (@oabdellatif)
+- ACP sessions appear merged with legacy sessions in ksm list, sorted by last activity (@oabdellatif)
+- v1/v2 column marker on every session (@oabdellatif)
+- All commands work on ACP sessions (@oabdellatif)
+- Sessions existing in both v1 and v2 stores display as separate entries
+- ksm resume --tui flag to force TUI mode
+- macOS support with pre-built binaries for Apple Silicon and Intel
+
+### Changed
+
+- ksm resume automatically opens v1 sessions in legacy UI and v2 sessions in TUI
+
+### Fixed
+
+- Resume correctly opens v1 sessions in legacy UI and v2 sessions in TUI
+- Delete targets the correct session version (v1 or v2) instead of both
+- Archive and index capture content from the correct session version
+- Indexed marker only shows on the specific version that was indexed
 
 ## [0.2.7] - 2026-04-01
 
