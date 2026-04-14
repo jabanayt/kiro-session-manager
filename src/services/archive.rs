@@ -8,8 +8,8 @@ use crate::data::{KsmDatabase, SessionSource};
 use crate::error::{KsmError, Result};
 use crate::models::{
     Archive, ArchiveResult, ArchiveStatus, AssistantContent, Chunk, ConversationData,
-    DeleteArchiveResult, NewArchive, NewChunk, SearchQuery, SearchResult, ShowArchiveResult,
-    ToolCall, ToolResultContent, UserContent,
+    DeleteArchiveResult, NewArchive, NewChunk, SearchQuery, SearchResult, Session,
+    ShowArchiveResult, SourceType, ToolCall, ToolResultContent, UserContent,
 };
 use crate::services::metadata::validate_tags;
 
@@ -17,22 +17,24 @@ use crate::services::metadata::validate_tags;
 
 /// Archive a session: extract conversation, clean, chunk, save, then delete.
 pub fn archive_session(
-    session_id: &str,
+    session: &Session,
     name: &str,
     tags: Vec<String>,
-    session_created_at: i64,
     directory: &str,
     source: &dyn SessionSource,
     db: &KsmDatabase,
 ) -> Result<ArchiveResult> {
     let tags = validate_tags(&tags)?;
+    let session_id = &session.id;
+    let session_created_at = session.created_at;
+    let source_type = session.source_type;
     // Check if already indexed - if so, convert to archive
-    if let Some(status) = db.get_archive_status(session_id)? {
+    if let Some(status) = db.get_archive_status_for_source(session_id, source_type)? {
         match status {
             ArchiveStatus::Indexed { archive_id, .. } => {
                 // Convert indexed to archived
                 db.set_indexed(archive_id, false)?;
-                source.delete_session(session_id)?;
+                source.delete_session(session_id, source_type)?;
                 let archive = db.get_archive_by_id(archive_id)?;
                 return Ok(ArchiveResult {
                     archive_name: archive.name,
@@ -47,7 +49,7 @@ pub fn archive_session(
         }
     }
 
-    let conversation = source.get_conversation(session_id)?;
+    let conversation = source.get_conversation(session_id, source_type)?;
     let pruned = is_pruned(&conversation);
     let chunks = extract_chunks(&conversation);
 
@@ -65,12 +67,13 @@ pub fn archive_session(
         archived_at: now,
         tags,
         pruned,
+        source_type,
     };
 
     db.save_archive(&new_archive, &chunks, false)?; // is_indexed = false
 
     // Delete session from Kiro
-    source.delete_session(session_id)?;
+    source.delete_session(session_id, source_type)?;
 
     Ok(ArchiveResult {
         archive_name: name.to_string(),
@@ -211,17 +214,19 @@ pub fn delete_archive_by_index(
 
 /// Index a session (add to search without deleting from Kiro).
 pub fn index_session(
-    session_id: &str,
+    session: &Session,
     name: &str,
     tags: Vec<String>,
-    session_created_at: i64,
     directory: &str,
     source: &dyn SessionSource,
     db: &KsmDatabase,
 ) -> Result<ArchiveResult> {
     let tags = validate_tags(&tags)?;
+    let session_id = &session.id;
+    let session_created_at = session.created_at;
+    let source_type = session.source_type;
     // Check if already indexed/archived
-    if let Some(status) = db.get_archive_status(session_id)? {
+    if let Some(status) = db.get_archive_status_for_source(session_id, source_type)? {
         let existing_name = match status {
             ArchiveStatus::Indexed { name, .. } => name,
             ArchiveStatus::Archived { name, .. } => name,
@@ -229,7 +234,7 @@ pub fn index_session(
         return Err(KsmError::AlreadyArchived(existing_name));
     }
 
-    let conversation = source.get_conversation(session_id)?;
+    let conversation = source.get_conversation(session_id, source_type)?;
     let pruned = is_pruned(&conversation);
     let chunks = extract_chunks(&conversation);
 
@@ -247,6 +252,7 @@ pub fn index_session(
         archived_at: now,
         tags,
         pruned,
+        source_type,
     };
 
     db.save_archive(&new_archive, &chunks, true)?; // is_indexed = true
@@ -264,11 +270,14 @@ pub fn reindex_session(
     session_id: &str,
     source: &dyn SessionSource,
     db: &KsmDatabase,
+    source_type: SourceType,
 ) -> Result<ReindexResult> {
-    let status = db.get_archive_status(session_id)?;
+    let status = db.get_archive_status_for_source(session_id, source_type)?;
 
     let (name, archive_id) = match status {
-        Some(ArchiveStatus::Indexed { name, archive_id }) => (name, archive_id),
+        Some(ArchiveStatus::Indexed {
+            name, archive_id, ..
+        }) => (name, archive_id),
         Some(ArchiveStatus::Archived { name, .. }) => {
             return Err(KsmError::CannotReindexArchived(name));
         }
@@ -280,7 +289,7 @@ pub fn reindex_session(
     let archive = db.get_archive_by_id(archive_id)?;
     let old_count = archive.message_count;
 
-    let conversation = source.get_conversation(session_id)?;
+    let conversation = source.get_conversation(session_id, source_type)?;
     let new_count = conversation.history.len() as u32;
 
     // Safety check
@@ -313,7 +322,7 @@ pub fn reindex_all(
     let mut results = Vec::new();
 
     for archive in indexed {
-        match reindex_session(&archive.session_id, source, db) {
+        match reindex_session(&archive.session_id, source, db, archive.source_type) {
             Ok(result) => results.push(result),
             Err(e) => {
                 results.push(ReindexResult {
@@ -331,9 +340,15 @@ pub fn reindex_all(
 }
 
 /// Remove index from a session (delete archive entry, session stays in Kiro).
-pub fn unindex_session(session_id: &str, db: &KsmDatabase) -> Result<UnindexResult> {
-    match db.get_archive_status(session_id)? {
-        Some(ArchiveStatus::Indexed { name, archive_id }) => {
+pub fn unindex_session(
+    session_id: &str,
+    db: &KsmDatabase,
+    source_type: SourceType,
+) -> Result<UnindexResult> {
+    match db.get_archive_status_for_source(session_id, source_type)? {
+        Some(ArchiveStatus::Indexed {
+            name, archive_id, ..
+        }) => {
             db.delete_archive(archive_id)?;
             Ok(UnindexResult { name })
         }
@@ -397,8 +412,12 @@ pub fn process_pending_reindex(
         }
     };
 
-    let status = match db.get_archive_status(&pending)? {
-        Some(ArchiveStatus::Indexed { name, archive_id }) => (name, archive_id),
+    let (session_id, source_type) = pending;
+
+    let status = match db.get_archive_status_for_source(&session_id, source_type)? {
+        Some(ArchiveStatus::Indexed {
+            name, archive_id, ..
+        }) => (name, archive_id),
         _ => {
             db.clear_pending_reindex()?;
             return Ok(PendingReindexResult {
@@ -413,7 +432,7 @@ pub fn process_pending_reindex(
     let archive = db.get_archive_by_id(archive_id)?;
     let stored_count = archive.message_count;
 
-    let conversation = match source.get_conversation(&pending) {
+    let conversation = match source.get_conversation(&session_id, source_type) {
         Ok(c) => c,
         Err(e) => {
             db.clear_pending_reindex()?;

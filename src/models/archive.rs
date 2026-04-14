@@ -3,6 +3,8 @@
 //! These types represent archived sessions, content chunks, search queries,
 //! and search results. Used by services/archive.rs and data/archive_store.rs.
 
+use super::SourceType;
+
 /// Status of a session in the archives table.
 ///
 /// Used by services to determine how to handle a session that's
@@ -10,9 +12,17 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArchiveStatus {
     /// Session is indexed (still in Kiro, searchable, can be updated).
-    Indexed { name: String, archive_id: i64 },
+    Indexed {
+        name: String,
+        archive_id: i64,
+        source_type: SourceType,
+    },
     /// Session is archived (deleted from Kiro, searchable, permanent).
-    Archived { name: String, archive_id: i64 },
+    Archived {
+        name: String,
+        archive_id: i64,
+        source_type: SourceType,
+    },
 }
 
 /// An archived session record.
@@ -41,6 +51,8 @@ pub struct Archive {
     pub pruned: bool,
     /// True if session still exists in Kiro (indexed), false if deleted (archived).
     pub is_indexed: bool,
+    /// Source type (v1/v2) of the archived session.
+    pub source_type: SourceType,
 }
 
 /// A single content chunk (one user-assistant exchange).
@@ -77,6 +89,7 @@ pub struct NewArchive {
     pub archived_at: i64,
     pub tags: Vec<String>,
     pub pruned: bool,
+    pub source_type: SourceType,
 }
 
 /// A single chunk to be inserted alongside a new archive.

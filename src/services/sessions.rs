@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::config::load_config;
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::{CachedSession, Session, SessionMetadata};
+use crate::models::{CachedSession, Session, SessionMetadata, SourceType};
 use crate::services::metadata::validate_tag;
 use crate::services::{chains, metadata};
 
@@ -14,9 +14,9 @@ pub struct SessionContext {
     pub all_sessions: Vec<Session>,
     pub metadata: HashMap<String, SessionMetadata>,
     pub auto_linked: usize,
-    /// Session IDs that are indexed (for display markers).
-    pub indexed_session_ids: Vec<String>,
-    pub cache: HashMap<String, CachedSession>,
+    /// Session IDs that are indexed (for display markers), with source type.
+    pub indexed_session_ids: Vec<(String, SourceType)>,
+    pub cache: HashMap<(String, SourceType), CachedSession>,
     /// Tags that fail validation, as (session_index, tag_name) pairs.
     pub invalid_tag_warnings: Vec<(usize, String)>,
 }
@@ -44,7 +44,10 @@ pub fn session_context(
     if config.auto_clean && !sessions.is_empty() {
         metadata::clean_stale_metadata(&sessions, &mut meta, db)?;
 
-        let live_ids: HashSet<String> = sessions.iter().map(|s| s.id.clone()).collect();
+        let live_ids: HashSet<(String, SourceType)> = sessions
+            .iter()
+            .map(|s| (s.id.clone(), s.source_type))
+            .collect();
         crate::services::cache::clean_stale(db, directory, &live_ids)?;
     }
 
@@ -56,7 +59,10 @@ pub fn session_context(
     };
 
     let indexed = db.list_indexed(directory)?;
-    let indexed_session_ids: Vec<String> = indexed.iter().map(|a| a.session_id.clone()).collect();
+    let indexed_session_ids: Vec<(String, SourceType)> = indexed
+        .iter()
+        .map(|a| (a.session_id.clone(), a.source_type))
+        .collect();
 
     let invalid_tag_warnings: Vec<(usize, String)> = sessions
         .iter()

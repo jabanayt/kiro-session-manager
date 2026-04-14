@@ -102,7 +102,7 @@ impl KiroDatabase {
     }
 
     /// Get conversation data and created_at timestamp in one query.
-    pub fn get_conversation_with_created_at(
+    pub fn query_conversation_with_created_at(
         &self,
         session_id: &str,
     ) -> Result<(ConversationData, i64)> {
@@ -158,7 +158,11 @@ impl SessionSource for KiroDatabase {
         Self::list_session_updates(self)
     }
 
-    fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
+    fn get_conversation(
+        &self,
+        session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<ConversationData> {
         let conn = self.open_readonly()?;
         let value_json: String = conn
             .query_row(
@@ -175,12 +179,13 @@ impl SessionSource for KiroDatabase {
     fn get_conversation_with_created_at(
         &self,
         session_id: &str,
+        _source_type: SourceType,
     ) -> Result<(ConversationData, i64)> {
-        Self::get_conversation_with_created_at(self, session_id)
+        Self::query_conversation_with_created_at(self, session_id)
     }
 
-    fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
-        let data = self.get_conversation(session_id)?;
+    fn get_message_ids(&self, session_id: &str, source_type: SourceType) -> Result<Vec<String>> {
+        let data = self.get_conversation(session_id, source_type)?;
         let mut message_ids = Vec::new();
         for entry in &data.history {
             if let Some(metadata) = &entry.request_metadata
@@ -192,8 +197,8 @@ impl SessionSource for KiroDatabase {
         Ok(message_ids)
     }
 
-    fn has_compact_tag(&self, session_id: &str) -> Result<bool> {
-        let data = self.get_conversation(session_id)?;
+    fn has_compact_tag(&self, session_id: &str, source_type: SourceType) -> Result<bool> {
+        let data = self.get_conversation(session_id, source_type)?;
         if let Some(summary) = data.latest_summary
             && summary.len() > 1
             && let Some(tags) = summary[1].get("message_meta_tags")
@@ -204,7 +209,7 @@ impl SessionSource for KiroDatabase {
         Ok(false)
     }
 
-    fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
+    fn get_timestamps(&self, session_id: &str, _source_type: SourceType) -> Result<(i64, i64)> {
         let conn = self.open_readonly()?;
         conn.query_row(
             "SELECT created_at, updated_at FROM conversations_v2 WHERE conversation_id = ?",
@@ -214,7 +219,12 @@ impl SessionSource for KiroDatabase {
         .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))
     }
 
-    fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
+    fn update_timestamp(
+        &self,
+        session_id: &str,
+        timestamp: i64,
+        _source_type: SourceType,
+    ) -> Result<()> {
         let current_dir = std::env::current_dir()?.display().to_string();
         let conn = self.open_readwrite()?;
         conn.execute(
@@ -225,9 +235,9 @@ impl SessionSource for KiroDatabase {
         Ok(())
     }
 
-    fn delete_session(&self, session_id: &str) -> Result<()> {
+    fn delete_session(&self, session_id: &str, _source_type: SourceType) -> Result<()> {
         let output = std::process::Command::new("kiro-cli")
-            .args(["chat", "--delete-session", session_id])
+            .args(["chat", "--delete-session", session_id, "--session-source", "v1"])
             .output()?;
 
         if !output.status.success() {

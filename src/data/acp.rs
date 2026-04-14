@@ -42,7 +42,7 @@ impl AcpSource {
     }
 
     /// Read and parse the .json metadata file for a session.
-    fn read_meta(&self, session_id: &str) -> Result<AcpMeta> {
+    pub(crate) fn read_meta(&self, session_id: &str) -> Result<AcpMeta> {
         let path = self.json_path(session_id);
         let content = std::fs::read_to_string(&path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -52,7 +52,7 @@ impl AcpSource {
     }
 
     /// List all session IDs whose .json files exist in the sessions dir.
-    fn all_ids(&self) -> Vec<String> {
+    pub(crate) fn all_ids(&self) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(&self.sessions_dir) else {
             return Vec::new();
         };
@@ -64,18 +64,28 @@ impl AcpSource {
             })
             .collect()
     }
+
+    /// Get the sessions directory mtime for cache validation.
+    pub fn dir_mtime(&self) -> Result<std::time::SystemTime> {
+        Ok(std::fs::metadata(&self.sessions_dir)?.modified()?)
+    }
+
+    /// Check if a session exists in ACP storage.
+    pub fn has_session(&self, session_id: &str) -> bool {
+        self.json_path(session_id).exists()
+    }
 }
 
 // --- Serde types for .json metadata ---
 
 #[derive(Deserialize)]
-struct AcpMeta {
-    session_id: String,
-    cwd: String,
-    created_at: String, // ISO 8601
-    updated_at: String, // ISO 8601
+pub(crate) struct AcpMeta {
+    pub(crate) session_id: String,
+    pub(crate) cwd: String,
+    pub(crate) created_at: String, // ISO 8601
+    pub(crate) updated_at: String, // ISO 8601
     #[serde(default)]
-    title: Option<String>,
+    pub(crate) title: Option<String>,
 }
 
 // --- Serde types for .jsonl events ---
@@ -87,37 +97,64 @@ struct AcpEvent {
 }
 
 /// Parse ISO 8601 timestamp to milliseconds since epoch.
-fn iso_to_ms(s: &str) -> i64 {
-    // Use a simple manual parse to avoid adding a chrono dependency.
-    // Format: "2026-03-22T05:59:41.761090399Z"
-    // We parse up to seconds precision and ignore sub-seconds.
-    let s = s.trim_end_matches('Z');
-    // Split on T
-    let (date_part, time_part) = match s.split_once('T') {
-        Some(p) => p,
-        None => return 0,
+///
+/// Handles timezone suffixes:
+/// - `Z` (UTC)
+/// - `+HH:MM` or `-HH:MM` (timezone offset, stripped and treated as UTC)
+///
+/// Returns error for invalid formats instead of silently returning 0.
+fn iso_to_ms(s: &str) -> Result<i64> {
+    let s = s.trim();
+
+    // Handle timezone suffix (Z or +HH:MM or -HH:MM)
+    let datetime = if let Some(stripped) = s.strip_suffix('Z') {
+        stripped
+    } else if s.len() > 6
+        && (s.as_bytes()[s.len() - 6] == b'+' || s.as_bytes()[s.len() - 6] == b'-')
+    {
+        // Has offset like +12:00 or -05:00, strip it (treat as UTC for simplicity)
+        &s[..s.len() - 6]
+    } else {
+        return Err(KsmError::Parse(format!("invalid timestamp format: {}", s)));
     };
+
+    let (date_part, time_part) = datetime
+        .split_once('T')
+        .ok_or_else(|| KsmError::Parse(format!("missing T separator: {}", s)))?;
+
     let date_parts: Vec<&str> = date_part.split('-').collect();
     let time_parts: Vec<&str> = time_part.split(':').collect();
+
     if date_parts.len() < 3 || time_parts.len() < 3 {
-        return 0;
+        return Err(KsmError::Parse(format!("incomplete timestamp: {}", s)));
     }
-    let year: i64 = date_parts[0].parse().unwrap_or(0);
-    let month: i64 = date_parts[1].parse().unwrap_or(0);
-    let day: i64 = date_parts[2].parse().unwrap_or(0);
-    let hour: i64 = time_parts[0].parse().unwrap_or(0);
-    let min: i64 = time_parts[1].parse().unwrap_or(0);
+
+    let year: i64 = date_parts[0]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid year: {}", s)))?;
+    let month: i64 = date_parts[1]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid month: {}", s)))?;
+    let day: i64 = date_parts[2]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid day: {}", s)))?;
+    let hour: i64 = time_parts[0]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid hour: {}", s)))?;
+    let min: i64 = time_parts[1]
+        .parse()
+        .map_err(|_| KsmError::Parse(format!("invalid minute: {}", s)))?;
     let sec: i64 = time_parts[2]
         .split('.')
         .next()
         .unwrap_or("0")
         .parse()
-        .unwrap_or(0);
+        .map_err(|_| KsmError::Parse(format!("invalid second: {}", s)))?;
 
     // Days since epoch using proleptic Gregorian calendar
     let days = days_since_epoch(year, month, day);
     let secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    secs * 1000
+    Ok(secs * 1000)
 }
 
 fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
@@ -286,8 +323,8 @@ impl SessionSource for AcpSource {
 
             sessions.push(Session {
                 id: meta.session_id,
-                created_at: iso_to_ms(&meta.created_at),
-                updated_at: iso_to_ms(&meta.updated_at),
+                created_at: iso_to_ms(&meta.created_at)?,
+                updated_at: iso_to_ms(&meta.updated_at)?,
                 preview,
                 msg_count,
                 source_type: SourceType::Acp,
@@ -309,13 +346,17 @@ impl SessionSource for AcpSource {
             if meta.cwd != current_dir {
                 continue;
             }
-            updates.push((meta.session_id, iso_to_ms(&meta.updated_at)));
+            updates.push((meta.session_id, iso_to_ms(&meta.updated_at)?));
         }
 
         Ok(updates)
     }
 
-    fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
+    fn get_conversation(
+        &self,
+        session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<ConversationData> {
         let jsonl_path = self.jsonl_path(session_id);
         let content = std::fs::read_to_string(&jsonl_path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -325,30 +366,36 @@ impl SessionSource for AcpSource {
     fn get_conversation_with_created_at(
         &self,
         session_id: &str,
+        source_type: SourceType,
     ) -> Result<(ConversationData, i64)> {
         let meta = self.read_meta(session_id)?;
-        let created_at = iso_to_ms(&meta.created_at);
-        let conv = self.get_conversation(session_id)?;
+        let created_at = iso_to_ms(&meta.created_at)?;
+        let conv = self.get_conversation(session_id, source_type)?;
         Ok((conv, created_at))
     }
 
-    fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
+    fn get_message_ids(&self, session_id: &str, _source_type: SourceType) -> Result<Vec<String>> {
         let jsonl_path = self.jsonl_path(session_id);
         let content = std::fs::read_to_string(&jsonl_path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
         Ok(extract_message_ids_from_jsonl(&content))
     }
 
-    fn has_compact_tag(&self, _session_id: &str) -> Result<bool> {
+    fn has_compact_tag(&self, _session_id: &str, _source_type: SourceType) -> Result<bool> {
         Ok(false) // ACP sessions don't use the Compact tag mechanism
     }
 
-    fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
+    fn get_timestamps(&self, session_id: &str, _source_type: SourceType) -> Result<(i64, i64)> {
         let meta = self.read_meta(session_id)?;
-        Ok((iso_to_ms(&meta.created_at), iso_to_ms(&meta.updated_at)))
+        Ok((iso_to_ms(&meta.created_at)?, iso_to_ms(&meta.updated_at)?))
     }
 
-    fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
+    fn update_timestamp(
+        &self,
+        session_id: &str,
+        timestamp: i64,
+        _source_type: SourceType,
+    ) -> Result<()> {
         let path = self.json_path(session_id);
         let content = std::fs::read_to_string(&path)
             .map_err(|_| KsmError::SessionNotFound(session_id.to_string()))?;
@@ -367,12 +414,28 @@ impl SessionSource for AcpSource {
         Ok(())
     }
 
-    fn delete_session(&self, session_id: &str) -> Result<()> {
-        let json_path = self.json_path(session_id);
-        let jsonl_path = self.jsonl_path(session_id);
-        // Remove both files; ignore errors if already gone
-        let _ = std::fs::remove_file(&json_path);
-        let _ = std::fs::remove_file(&jsonl_path);
+    /// Delete a session from ACP storage via kiro-cli.
+    ///
+    /// Uses `kiro-cli chat --delete-session <id> --session-source v2` to ensure
+    /// proper cleanup consistent with kiro-cli's expectations.
+    fn delete_session(&self, session_id: &str, _source_type: SourceType) -> Result<()> {
+        let output = std::process::Command::new("kiro-cli")
+            .args([
+                "chat",
+                "--delete-session",
+                session_id,
+                "--session-source",
+                "v2",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(KsmError::KiroCli(format!(
+                "Failed to delete session {}: {}",
+                session_id,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
         Ok(())
     }
 

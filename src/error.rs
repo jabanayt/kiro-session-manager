@@ -12,6 +12,9 @@ pub enum KsmError {
     #[error("Database error: {0}")]
     Database(String),
 
+    #[error("Parse error: {0}")]
+    Parse(String),
+
     #[error("Storage error: {message}")]
     Storage {
         message: String,

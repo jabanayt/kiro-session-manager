@@ -1,9 +1,34 @@
+use crate::error::KsmError;
+
 /// Whether a session comes from the legacy SQLite database or the ACP file store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
+)]
 pub enum SourceType {
     #[default]
     Legacy,
     Acp,
+}
+
+impl SourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceType::Acp => "v2",
+            SourceType::Legacy => "v1",
+        }
+    }
+}
+
+impl std::str::FromStr for SourceType {
+    type Err = KsmError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "v1" => Ok(SourceType::Legacy),
+            "v2" => Ok(SourceType::Acp),
+            _ => Err(KsmError::Parse(format!("unknown source type: {}", s))),
+        }
+    }
 }
 
 /// A kiro-cli chat session with raw (unformatted) data.

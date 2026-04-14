@@ -9,6 +9,7 @@ use crate::cli::pager;
 use crate::cli::styles;
 use crate::data::{HybridSource, KsmDatabase, SessionSource};
 use crate::error::KsmError;
+use crate::models::SourceType;
 use crate::services::sessions::SessionContext;
 use crate::services::{archive, chains, delete, metadata, resume, sessions};
 
@@ -43,6 +44,8 @@ pub enum Commands {
         tag: Option<String>,
         #[arg(short, long)]
         name: Option<String>,
+        #[arg(long)]
+        tui: bool,
     },
     /// Delete sessions by index numbers (e.g., "1,3,5" or "1 3 5")
     #[command(alias = "d")]
@@ -238,8 +241,9 @@ pub fn run(cli: Cli) -> Result<()> {
             last,
             tag,
             name,
+            tui,
         } => {
-            cmd_resume(&source, &db, index, last, tag, name, &directory)?;
+            cmd_resume(&source, &db, index, last, tag, name, tui, &directory)?;
         }
         Commands::Link {
             child_index,
@@ -529,6 +533,7 @@ fn cmd_clean_metadata(source: &dyn SessionSource, db: &KsmDatabase, directory: &
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_resume(
     source: &dyn SessionSource,
     db: &KsmDatabase,
@@ -536,6 +541,7 @@ fn cmd_resume(
     last: bool,
     tag: Option<String>,
     name: Option<String>,
+    tui: bool,
     directory: &str,
 ) -> Result<()> {
     let target = if last {
@@ -579,12 +585,13 @@ fn cmd_resume(
     let result = resume::resume(target, source, db, directory)?;
 
     match result {
-        resume::ResumeResult::LaunchDirect => {
-            launch_kiro_resume()?;
-        }
-        resume::ResumeResult::Ready { display_name, .. } => {
+        resume::ResumeResult::Ready {
+            session_id,
+            display_name,
+            source_type,
+        } => {
             println!("Resuming '{}'...", display_name);
-            launch_kiro_resume()?;
+            launch_kiro_resume(&session_id, source_type, tui)?;
         }
         resume::ResumeResult::MultipleMatches { tag, matches } => {
             println!("\nSessions with tag '{}':\n", tag);
@@ -606,12 +613,19 @@ fn cmd_resume(
                 );
             }
 
-            let retry_target = resume::ResumeTarget::Index(matches[selection].original_index);
+            // Retry path: capture source_type from the selected match
+            let selected = &matches[selection];
+            let retry_target = resume::ResumeTarget::Index(selected.original_index);
             let retry_result = resume::resume(retry_target, source, db, directory)?;
-            if let resume::ResumeResult::Ready { display_name, .. } = retry_result {
+            if let resume::ResumeResult::Ready {
+                session_id,
+                display_name,
+                source_type,
+            } = retry_result
+            {
                 println!("Resuming '{}'...", display_name);
+                launch_kiro_resume(&session_id, source_type, tui)?;
             }
-            launch_kiro_resume()?;
         }
     }
 
@@ -855,8 +869,8 @@ fn cmd_detect_links(
                 ))
             );
 
-            // Hint if parent is indexed
-            if indexed_session_ids.contains(&candidate.parent_id) {
+            // Hint if parent is indexed (chains are v1-only)
+            if indexed_session_ids.contains(&(candidate.parent_id.clone(), SourceType::Legacy)) {
                 println!(
                     "  [{}] is searchable. To search this compacted session too: ksm index {}",
                     parent_idx, child_idx
@@ -951,15 +965,7 @@ fn cmd_archive(
         }
     };
 
-    let result = archive::archive_session(
-        &session.id,
-        &name,
-        tags,
-        session.created_at,
-        directory,
-        source,
-        db,
-    )?;
+    let result = archive::archive_session(session, &name, tags, directory, source, db)?;
 
     let mut msg = format!("Archived [{}] as '{}'", index, result.archive_name);
     if result.pruned {
@@ -1052,15 +1058,7 @@ fn cmd_index(
         }
     };
 
-    let result = archive::index_session(
-        &session.id,
-        &name,
-        tags,
-        session.created_at,
-        directory,
-        source,
-        db,
-    )?;
+    let result = archive::index_session(session, &name, tags, directory, source, db)?;
 
     println!(
         "{}",
@@ -1083,7 +1081,7 @@ fn cmd_reindex(
         sessions::validate_index(idx, list_result.all_sessions.len())?;
         let session = &list_result.all_sessions[idx];
 
-        let result = match archive::reindex_session(&session.id, source, db) {
+        let result = match archive::reindex_session(&session.id, source, db, session.source_type) {
             Ok(r) => r,
             Err(KsmError::NotIndexed(_)) => {
                 println!(
@@ -1166,7 +1164,7 @@ fn cmd_unindex(
     sessions::validate_index(index, list_result.all_sessions.len())?;
     let session = &list_result.all_sessions[index];
 
-    match archive::unindex_session(&session.id, db) {
+    match archive::unindex_session(&session.id, db, session.source_type) {
         Ok(result) => {
             println!(
                 "{}",
@@ -1271,6 +1269,7 @@ fn cmd_delete(
                 &mut meta,
                 source,
                 db,
+                session.source_type,
             )?;
 
             let regular_count = result.deleted_ids.len() - result.indexed_count;
@@ -1322,9 +1321,9 @@ fn cmd_delete(
         }
     }
 
-    let ids: Vec<String> = indices
+    let ids: Vec<(String, SourceType)> = indices
         .iter()
-        .map(|&i| all_sessions[i].id.clone())
+        .map(|&i| (all_sessions[i].id.clone(), all_sessions[i].source_type))
         .collect();
     let result = delete::delete_sessions(&ids, source, &mut meta, db)?;
 
@@ -1556,15 +1555,18 @@ fn cmd_compare_methods() -> Result<()> {
 // --- Shared helpers ---
 
 /// Launch kiro-cli in resume mode (takes over the terminal).
-fn launch_kiro_resume() -> Result<()> {
+fn launch_kiro_resume(session_id: &str, source_type: SourceType, force_tui: bool) -> Result<()> {
+    let ui_flag = if force_tui || source_type == SourceType::Acp {
+        "--tui"
+    } else {
+        "--legacy-ui"
+    };
     let status = std::process::Command::new("kiro-cli")
-        .args(["chat", "--resume"])
+        .args(["chat", ui_flag, "--resume-id", session_id])
         .status()
         .context("Failed to execute kiro-cli")?;
-
     if !status.success() {
         anyhow::bail!("kiro-cli exited with error");
     }
-
     Ok(())
 }

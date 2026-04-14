@@ -25,36 +25,61 @@ pub trait SessionSource {
     fn list_session_updates(&self) -> Result<Vec<(String, i64)>>;
 
     /// Get full conversation JSON for a session.
-    fn get_conversation(&self, session_id: &str) -> Result<ConversationData>;
+    fn get_conversation(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<ConversationData>;
 
     /// Get conversation data and created_at timestamp in one query.
     /// Used by cache service on cache miss.
-    fn get_conversation_with_created_at(&self, session_id: &str)
-    -> Result<(ConversationData, i64)>;
+    fn get_conversation_with_created_at(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<(ConversationData, i64)>;
 
     /// Extract message IDs from a session's history.
-    fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>>;
+    fn get_message_ids(&self, session_id: &str, source_type: SourceType) -> Result<Vec<String>>;
 
     /// Check if a session has the Compact tag in its summary.
-    fn has_compact_tag(&self, session_id: &str) -> Result<bool>;
+    fn has_compact_tag(&self, session_id: &str, source_type: SourceType) -> Result<bool>;
 
     /// Get (created_at, updated_at) timestamps in milliseconds.
-    fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)>;
+    fn get_timestamps(&self, session_id: &str, source_type: SourceType) -> Result<(i64, i64)>;
 
     /// Update a session's updated_at timestamp (for resume).
-    fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()>;
+    fn update_timestamp(
+        &self,
+        session_id: &str,
+        timestamp: i64,
+        source_type: SourceType,
+    ) -> Result<()>;
 
     /// Delete a session via kiro-cli.
-    fn delete_session(&self, session_id: &str) -> Result<()>;
+    fn delete_session(&self, session_id: &str, source_type: SourceType) -> Result<()>;
 
     /// The source type for sessions produced by this source.
     fn source_type(&self) -> SourceType {
         SourceType::Legacy
     }
 
-    /// The source type for a specific session ID (for routing sources like HybridSource).
-    fn session_source_type(&self, _session_id: &str) -> SourceType {
-        self.source_type()
+    /// Get ACP directory mtime for cache validation.
+    /// Returns None for sources without ACP sessions.
+    fn acp_dir_mtime(&self) -> Option<std::time::SystemTime> {
+        None
+    }
+
+    /// List session updates from legacy (v1) storage only.
+    /// Used by cache when ACP mtime unchanged.
+    fn list_session_updates_v1(&self) -> Result<Vec<(String, i64)>> {
+        self.list_session_updates() // Default: same as full list
+    }
+
+    /// List session IDs from ACP (v2) storage only.
+    /// Returns just IDs (not timestamps) for cache key tracking.
+    fn list_acp_session_ids(&self) -> Result<Vec<String>> {
+        Ok(Vec::new()) // Default: no ACP sessions
     }
 }
 
@@ -78,20 +103,6 @@ impl HybridSource {
             database: KiroDatabase::new(),
             cli_fallback: KiroCliSource::new(),
             acp: AcpSource::new(),
-        }
-    }
-
-    /// Determine which source owns a session ID by checking ACP first (file existence),
-    /// then falling back to legacy.
-    fn route(&self, session_id: &str) -> &dyn SessionSource {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let json_path = std::path::PathBuf::from(home)
-            .join(".kiro/sessions/cli")
-            .join(format!("{}.json", session_id));
-        if json_path.exists() {
-            &self.acp
-        } else {
-            &self.database
         }
     }
 }
@@ -124,40 +135,95 @@ impl SessionSource for HybridSource {
         Ok(updates)
     }
 
-    fn get_conversation(&self, session_id: &str) -> Result<ConversationData> {
-        self.route(session_id).get_conversation(session_id)
+    fn get_conversation(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<ConversationData> {
+        match source_type {
+            SourceType::Acp => self.acp.get_conversation(session_id, source_type),
+            SourceType::Legacy => self.database.get_conversation(session_id, source_type),
+        }
     }
 
     fn get_conversation_with_created_at(
         &self,
         session_id: &str,
+        source_type: SourceType,
     ) -> Result<(ConversationData, i64)> {
-        self.route(session_id)
-            .get_conversation_with_created_at(session_id)
+        match source_type {
+            SourceType::Acp => self
+                .acp
+                .get_conversation_with_created_at(session_id, source_type),
+            SourceType::Legacy => self
+                .database
+                .get_conversation_with_created_at(session_id, source_type),
+        }
     }
 
-    fn get_message_ids(&self, session_id: &str) -> Result<Vec<String>> {
-        self.route(session_id).get_message_ids(session_id)
+    fn get_message_ids(&self, session_id: &str, source_type: SourceType) -> Result<Vec<String>> {
+        match source_type {
+            SourceType::Acp => self.acp.get_message_ids(session_id, source_type),
+            SourceType::Legacy => self.database.get_message_ids(session_id, source_type),
+        }
     }
 
-    fn has_compact_tag(&self, session_id: &str) -> Result<bool> {
-        self.route(session_id).has_compact_tag(session_id)
+    fn has_compact_tag(&self, session_id: &str, source_type: SourceType) -> Result<bool> {
+        match source_type {
+            SourceType::Acp => self.acp.has_compact_tag(session_id, source_type),
+            SourceType::Legacy => self.database.has_compact_tag(session_id, source_type),
+        }
     }
 
-    fn get_timestamps(&self, session_id: &str) -> Result<(i64, i64)> {
-        self.route(session_id).get_timestamps(session_id)
+    fn get_timestamps(&self, session_id: &str, source_type: SourceType) -> Result<(i64, i64)> {
+        match source_type {
+            SourceType::Acp => self.acp.get_timestamps(session_id, source_type),
+            SourceType::Legacy => self.database.get_timestamps(session_id, source_type),
+        }
     }
 
-    fn update_timestamp(&self, session_id: &str, timestamp: i64) -> Result<()> {
-        self.route(session_id)
-            .update_timestamp(session_id, timestamp)
+    fn update_timestamp(
+        &self,
+        session_id: &str,
+        timestamp: i64,
+        source_type: SourceType,
+    ) -> Result<()> {
+        match source_type {
+            SourceType::Acp => self
+                .acp
+                .update_timestamp(session_id, timestamp, source_type),
+            SourceType::Legacy => {
+                self.database
+                    .update_timestamp(session_id, timestamp, source_type)
+            }
+        }
     }
 
-    fn delete_session(&self, session_id: &str) -> Result<()> {
-        self.route(session_id).delete_session(session_id)
+    fn delete_session(&self, session_id: &str, source_type: SourceType) -> Result<()> {
+        match source_type {
+            SourceType::Acp => self.acp.delete_session(session_id, source_type),
+            SourceType::Legacy => self.database.delete_session(session_id, source_type),
+        }
     }
 
-    fn session_source_type(&self, session_id: &str) -> SourceType {
-        self.route(session_id).source_type()
+    fn acp_dir_mtime(&self) -> Option<std::time::SystemTime> {
+        self.acp.dir_mtime().ok()
+    }
+
+    fn list_session_updates_v1(&self) -> Result<Vec<(String, i64)>> {
+        self.database.list_session_updates()
+    }
+
+    fn list_acp_session_ids(&self) -> Result<Vec<String>> {
+        let current_dir = std::env::current_dir()?.display().to_string();
+        let mut ids = Vec::new();
+        for id in self.acp.all_ids() {
+            if let Ok(meta) = self.acp.read_meta(&id)
+                && meta.cwd == current_dir
+            {
+                ids.push(meta.session_id);
+            }
+        }
+        Ok(ids)
     }
 }

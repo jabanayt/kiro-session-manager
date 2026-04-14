@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::data::KsmDatabase;
 use crate::error::{KsmError, Result};
-use crate::models::{CachedSession, Session, SessionMetadata};
+use crate::models::{CachedSession, Session, SessionMetadata, SourceType};
 
 // --- Result types ---
 
@@ -307,11 +307,12 @@ pub fn execute_unlink(
 /// and timestamp proximity.
 pub fn find_potential_parents(
     child_id: &str,
+    child_source_type: SourceType,
     sessions: &[Session],
-    cache: &HashMap<String, CachedSession>,
+    cache: &HashMap<(String, SourceType), CachedSession>,
 ) -> Result<Vec<String>> {
     let child_cached = cache
-        .get(child_id)
+        .get(&(child_id.to_string(), child_source_type))
         .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", child_id)))?;
 
     let child_msg_ids = &child_cached.message_ids;
@@ -325,7 +326,7 @@ pub fn find_potential_parents(
             continue;
         }
         let parent_cached = cache
-            .get(&session.id)
+            .get(&(session.id.clone(), session.source_type))
             .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
 
         if child_msg_ids
@@ -348,7 +349,7 @@ pub fn find_potential_parents(
             continue;
         }
         let parent_cached = cache
-            .get(&session.id)
+            .get(&(session.id.clone(), session.source_type))
             .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
 
         if parent_cached.has_compact_tag {
@@ -368,7 +369,7 @@ pub fn find_potential_parents(
 pub fn detect_unlinked_continuations(
     sessions: &[Session],
     metadata: &HashMap<String, SessionMetadata>,
-    cache: &HashMap<String, CachedSession>,
+    cache: &HashMap<(String, SourceType), CachedSession>,
     force: bool,
 ) -> Result<Vec<DetectionCandidate>> {
     let mut candidates = Vec::new();
@@ -385,7 +386,7 @@ pub fn detect_unlinked_continuations(
         }
 
         let cached = cache
-            .get(&session.id)
+            .get(&(session.id.clone(), session.source_type))
             .ok_or_else(|| KsmError::Internal(format!("session {} not in cache", session.id)))?;
 
         // Check if this session has Compact tag
@@ -393,7 +394,8 @@ pub fn detect_unlinked_continuations(
             continue;
         }
 
-        let parent_candidates = find_potential_parents(&session.id, sessions, cache)?;
+        let parent_candidates =
+            find_potential_parents(&session.id, session.source_type, sessions, cache)?;
         if parent_candidates.is_empty() {
             continue;
         }
@@ -422,7 +424,7 @@ pub fn detect_unlinked_continuations(
 pub fn auto_link_continuations(
     sessions: &[Session],
     metadata: &mut HashMap<String, SessionMetadata>,
-    cache: &HashMap<String, CachedSession>,
+    cache: &HashMap<(String, SourceType), CachedSession>,
     db: &KsmDatabase,
 ) -> Result<usize> {
     let candidates = detect_unlinked_continuations(sessions, metadata, cache, false)?;
