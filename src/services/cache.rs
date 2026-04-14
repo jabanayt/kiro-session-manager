@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::data::{KsmDatabase, SessionSource};
 use crate::error::Result;
-use crate::models::CachedSession;
+use crate::models::{CachedSession, SourceType};
 
 /// Get all cached session data for a directory.
 ///
@@ -19,7 +19,7 @@ pub fn sessions(
     source: &dyn SessionSource,
     db: &KsmDatabase,
     directory: &str,
-) -> Result<HashMap<String, CachedSession>> {
+) -> Result<HashMap<(String, SourceType), CachedSession>> {
     debug!("Loading session cache for directory: {}", directory);
 
     // 1. Get v1 updates (always fast, SQLite index scan)
@@ -34,15 +34,21 @@ pub fn sessions(
     let mut cache = db.get_cached_sessions(directory)?;
     debug!("Loaded {} cached entries from ksm.db", cache.len());
 
-    // 4. Build combined update list
-    let mut updates: Vec<(String, i64)> = v1_updates;
+    // 4. Build combined update list with source type
+    let mut updates: Vec<(String, i64, SourceType)> = v1_updates
+        .into_iter()
+        .map(|(id, ts)| (id, ts, SourceType::Legacy))
+        .collect();
 
     // For ACP sessions, use cached timestamp or 0 to force cache miss.
     // Timestamp 0 ensures new ACP sessions (not yet in cache) trigger a full
     // conversation fetch, since no valid session has updated_at == 0.
     for acp_id in &acp_ids {
-        let ts = cache.get(acp_id).map(|c| c.updated_at).unwrap_or(0);
-        updates.push((acp_id.clone(), ts));
+        let ts = cache
+            .get(&(acp_id.clone(), SourceType::Acp))
+            .map(|c| c.updated_at)
+            .unwrap_or(0);
+        updates.push((acp_id.clone(), ts, SourceType::Acp));
     }
 
     if updates.is_empty() {
@@ -55,8 +61,8 @@ pub fn sessions(
     let mut hits = 0;
     let mut misses = 0;
 
-    for (session_id, updated_at) in &updates {
-        if let Some(cached) = cache.get(session_id)
+    for (session_id, updated_at, source_type) in &updates {
+        if let Some(cached) = cache.get(&(session_id.clone(), *source_type))
             && cached.updated_at == *updated_at
             && *updated_at != 0
         {
@@ -68,8 +74,9 @@ pub fn sessions(
         misses += 1;
         debug!("Cache miss: session {}", session_id);
 
-        let (conversation, created_at) = source.get_conversation_with_created_at(session_id)?;
-        let (_, actual_updated_at) = source.get_timestamps(session_id)?;
+        let (conversation, created_at) =
+            source.get_conversation_for_source(session_id, *source_type)?;
+        let (_, actual_updated_at) = source.get_timestamps_for_source(session_id, *source_type)?;
         let preview = conversation.preview();
         let msg_count = conversation.history.len() as u32;
         let has_compact_tag = extract_has_compact_tag(&conversation);
@@ -84,10 +91,10 @@ pub fn sessions(
             msg_count,
             has_compact_tag,
             message_ids,
-            source_type: source.session_source_type(session_id),
+            source_type: *source_type,
         };
 
-        cache.insert(session_id.clone(), cached.clone());
+        cache.insert((session_id.clone(), *source_type), cached.clone());
         to_update.push(cached);
     }
 
@@ -100,8 +107,11 @@ pub fn sessions(
     }
 
     // 7. Filter to only sessions that exist
-    let live_ids: HashSet<_> = updates.iter().map(|(id, _)| id.clone()).collect();
-    cache.retain(|id, _| live_ids.contains(id));
+    let live_ids: HashSet<(String, SourceType)> = updates
+        .iter()
+        .map(|(id, _, st)| (id.clone(), *st))
+        .collect();
+    cache.retain(|key, _| live_ids.contains(key));
 
     Ok(cache)
 }
@@ -135,9 +145,9 @@ fn get_acp_ids_cached(
 pub fn clean_stale(
     db: &KsmDatabase,
     directory: &str,
-    live_session_ids: &HashSet<String>,
+    live_keys: &HashSet<(String, SourceType)>,
 ) -> Result<usize> {
-    let deleted = db.delete_stale_cache(directory, live_session_ids)?;
+    let deleted = db.delete_stale_cache(directory, live_keys)?;
     if deleted > 0 {
         debug!("Cleaned {} stale cache entries", deleted);
     }

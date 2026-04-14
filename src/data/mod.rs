@@ -74,6 +74,27 @@ pub trait SessionSource {
     fn list_acp_session_ids(&self) -> Result<Vec<String>> {
         Ok(Vec::new()) // Default: no ACP sessions
     }
+
+    /// Get conversation data from a specific source type.
+    /// Used by cache service when the same session_id exists in multiple sources.
+    /// Default: ignores source_type, calls get_conversation_with_created_at().
+    fn get_conversation_for_source(
+        &self,
+        session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<(ConversationData, i64)> {
+        self.get_conversation_with_created_at(session_id)
+    }
+
+    /// Get timestamps from a specific source type.
+    /// Default: ignores source_type, calls get_timestamps().
+    fn get_timestamps_for_source(
+        &self,
+        session_id: &str,
+        _source_type: SourceType,
+    ) -> Result<(i64, i64)> {
+        self.get_timestamps(session_id)
+    }
 }
 
 /// Hybrid session source: tries database first, falls back to CLI parsing.
@@ -194,5 +215,27 @@ impl SessionSource for HybridSource {
             }
         }
         Ok(ids)
+    }
+
+    fn get_conversation_for_source(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<(ConversationData, i64)> {
+        match source_type {
+            SourceType::Acp => self.acp.get_conversation_with_created_at(session_id),
+            SourceType::Legacy => self.database.get_conversation_with_created_at(session_id),
+        }
+    }
+
+    fn get_timestamps_for_source(
+        &self,
+        session_id: &str,
+        source_type: SourceType,
+    ) -> Result<(i64, i64)> {
+        match source_type {
+            SourceType::Acp => self.acp.get_timestamps(session_id),
+            SourceType::Legacy => self.database.get_timestamps(session_id),
+        }
     }
 }

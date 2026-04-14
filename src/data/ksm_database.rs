@@ -12,7 +12,7 @@ use crate::config::{Config, load_config, metadata_path};
 use crate::error::{KsmError, Result};
 use crate::models::{
     Archive, ArchiveStatus, CachedSession, Chunk, NewArchive, NewChunk, SearchQuery, SearchResult,
-    SessionMetadata,
+    SessionMetadata, SourceType,
 };
 
 /// State key for pending reindex tracking.
@@ -342,7 +342,22 @@ impl KsmDatabase {
                 session_ids TEXT NOT NULL DEFAULT '[]'
             );
 
-            ALTER TABLE session_cache ADD COLUMN source_type TEXT NOT NULL DEFAULT 'v1';
+            DROP TABLE IF EXISTS session_cache;
+
+            CREATE TABLE session_cache (
+                session_id TEXT NOT NULL,
+                directory TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                preview TEXT NOT NULL,
+                msg_count INTEGER NOT NULL,
+                has_compact_tag INTEGER NOT NULL DEFAULT 0,
+                message_ids TEXT NOT NULL DEFAULT '[]',
+                source_type TEXT NOT NULL DEFAULT 'v1',
+                PRIMARY KEY (session_id, source_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_cache_directory ON session_cache(directory);
 
             UPDATE schema_version SET version = 6;",
         )?;
@@ -717,18 +732,22 @@ impl KsmDatabase {
 
     // ========== Session Cache Methods ==========
 
-    /// Get cached sessions for a directory, keyed by session_id.
-    pub fn get_cached_sessions(&self, directory: &str) -> Result<HashMap<String, CachedSession>> {
+    /// Get cached sessions for a directory, keyed by (session_id, source_type).
+    pub fn get_cached_sessions(
+        &self,
+        directory: &str,
+    ) -> Result<HashMap<(String, SourceType), CachedSession>> {
         let conn = self.open()?;
         let mut stmt = conn.prepare(
             "SELECT session_id, directory, updated_at, created_at, preview, msg_count,
-                    has_compact_tag, message_ids
+                    has_compact_tag, message_ids, source_type
              FROM session_cache WHERE directory = ?",
         )?;
 
         let mut cache = HashMap::new();
         let rows = stmt.query_map([directory], |row| {
             let message_ids_json: String = row.get(7)?;
+            let source_type_str: String = row.get(8)?;
             Ok(CachedSession {
                 session_id: row.get(0)?,
                 directory: row.get(1)?,
@@ -738,13 +757,19 @@ impl KsmDatabase {
                 msg_count: row.get::<_, i64>(5)? as u32,
                 has_compact_tag: row.get::<_, i32>(6)? != 0,
                 message_ids: serde_json::from_str(&message_ids_json).unwrap_or_default(),
-                source_type: Default::default(),
+                source_type: source_type_str.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        8,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
             })
         })?;
 
         for row in rows {
             let cached = row?;
-            cache.insert(cached.session_id.clone(), cached);
+            cache.insert((cached.session_id.clone(), cached.source_type), cached);
         }
 
         Ok(cache)
@@ -786,22 +811,31 @@ impl KsmDatabase {
     pub fn delete_stale_cache(
         &self,
         directory: &str,
-        live_session_ids: &HashSet<String>,
+        live_keys: &HashSet<(String, SourceType)>,
     ) -> Result<usize> {
         let conn = self.open()?;
 
-        // Get all cached IDs for this directory
-        let mut stmt = conn.prepare("SELECT session_id FROM session_cache WHERE directory = ?")?;
-        let cached_ids: Vec<String> = stmt
-            .query_map([directory], |row| row.get(0))?
+        // Get all cached keys for this directory
+        let mut stmt =
+            conn.prepare("SELECT session_id, source_type FROM session_cache WHERE directory = ?")?;
+        let cached_keys: Vec<(String, SourceType)> = stmt
+            .query_map([directory], |row| {
+                let id: String = row.get(0)?;
+                let st: String = row.get(1)?;
+                Ok((id, st))
+            })?
             .filter_map(|r| r.ok())
-            .collect();
+            .map(|(id, st)| Ok((id, st.parse()?)))
+            .collect::<Result<_>>()?;
 
         // Delete those not in live set
         let mut deleted = 0;
-        for id in cached_ids {
-            if !live_session_ids.contains(&id) {
-                conn.execute("DELETE FROM session_cache WHERE session_id = ?", [&id])?;
+        for (id, source_type) in cached_keys {
+            if !live_keys.contains(&(id.clone(), source_type)) {
+                conn.execute(
+                    "DELETE FROM session_cache WHERE session_id = ? AND source_type = ?",
+                    rusqlite::params![id, source_type.as_str()],
+                )?;
                 deleted += 1;
             }
         }
