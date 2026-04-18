@@ -20,3 +20,7 @@ toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 libc = "0.2"
 unicode-width = "0.2"
+
+[lints.clippy]
+unwrap_used = "warn"
+print_stderr = "warn"
