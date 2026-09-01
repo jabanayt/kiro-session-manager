@@ -202,3 +202,88 @@ impl ConversationData {
         "[No preview available]".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_preview_extracts_first_prompt() {
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::Prompt(PromptContent {
+                        prompt: "Hello, how are you?".to_string(),
+                    })),
+                    timestamp: None,
+                }),
+                assistant: None,
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+        assert_eq!(conv.preview(), "Hello, how are you?");
+    }
+
+    #[test]
+    fn test_preview_sanitizes_whitespace() {
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::Prompt(PromptContent {
+                        prompt: "Hello\n\nWorld\t\ttabs".to_string(),
+                    })),
+                    timestamp: None,
+                }),
+                assistant: None,
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+        assert_eq!(conv.preview(), "Hello World tabs");
+    }
+
+    #[test]
+    fn test_preview_truncates_long_text() {
+        let long_prompt = "x".repeat(150);
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::Prompt(PromptContent {
+                        prompt: long_prompt,
+                    })),
+                    timestamp: None,
+                }),
+                assistant: None,
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+        assert_eq!(conv.preview().len(), 100);
+    }
+
+    #[test]
+    fn test_preview_compacted_session() {
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![],
+            latest_summary: Some(vec![serde_json::json!({"text": "Summary"})]),
+        };
+        assert_eq!(conv.preview(), "[Compacted session]");
+    }
+
+    #[test]
+    fn test_preview_no_content() {
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![],
+            latest_summary: None,
+        };
+        assert_eq!(conv.preview(), "[No preview available]");
+    }
+}

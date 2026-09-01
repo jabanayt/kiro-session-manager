@@ -207,3 +207,53 @@ pub fn compare_sources(
         differences,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::error::KsmError;
+
+    #[test]
+    fn test_validate_index_valid() {
+        assert!(validate_index(0, 5).is_ok());
+        assert!(validate_index(4, 5).is_ok());
+    }
+
+    #[test]
+    fn test_validate_index_out_of_range() {
+        use assert_matches::assert_matches;
+
+        assert_matches!(
+            validate_index(5, 5),
+            Err(KsmError::IndexOutOfRange { index: 5, max: 4 })
+        );
+        assert_matches!(
+            validate_index(10, 5),
+            Err(KsmError::IndexOutOfRange { index: 10, max: 4 })
+        );
+    }
+
+    #[test]
+    fn test_validate_index_empty_list() {
+        use assert_matches::assert_matches;
+
+        assert_matches!(validate_index(0, 0), Err(KsmError::IndexOutOfRange { .. }));
+    }
+
+    #[test]
+    fn test_validate_indices_all_valid() {
+        assert!(validate_indices(&[0, 1, 2], 5).is_ok());
+    }
+
+    #[test]
+    fn test_validate_indices_one_invalid() {
+        assert!(validate_indices(&[0, 5, 2], 5).is_err());
+    }
+
+    #[test]
+    fn test_validate_indices_empty() {
+        assert!(validate_indices(&[], 5).is_ok());
+    }
+}

@@ -689,3 +689,74 @@ pub fn format_single_exchange(archive: &Archive, chunk: &Chunk) -> String {
     output.push('\n');
     output
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_format_msg_count_singular() {
+        assert_eq!(format_msg_count(1), "1 msg");
+    }
+
+    #[test]
+    fn test_format_msg_count_plural() {
+        assert_eq!(format_msg_count(0), "0 msgs");
+        assert_eq!(format_msg_count(2), "2 msgs");
+        assert_eq!(format_msg_count(100), "100 msgs");
+    }
+
+    #[test]
+    fn test_truncate_to_width_no_truncation() {
+        assert_eq!(truncate_to_width("short", 10), "short");
+        assert_eq!(truncate_to_width("exact", 5), "exact");
+    }
+
+    #[test]
+    fn test_truncate_to_width_truncates() {
+        let result = truncate_to_width("this is a long string", 10);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 13); // 10 chars + "..."
+    }
+
+    #[test]
+    fn test_pad_to_width_pads() {
+        assert_eq!(pad_to_width("hi", 5), "hi   ");
+        assert_eq!(pad_to_width("", 3), "   ");
+    }
+
+    #[test]
+    fn test_pad_to_width_no_pad_needed() {
+        assert_eq!(pad_to_width("hello", 5), "hello");
+        assert_eq!(pad_to_width("longer", 3), "longer");
+    }
+
+    // Note: format_time_ago and format_time_compact depend on current time,
+    // making them non-deterministic. Testing output format only.
+    #[test]
+    fn test_format_time_ago_format() {
+        // Use a timestamp from 1 hour ago
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let one_hour_ago = now_ms - 3600 * 1000;
+
+        let result = format_time_ago(one_hour_ago);
+        assert_eq!(result, "1 hour ago");
+    }
+
+    #[test]
+    fn test_format_time_compact_format() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let one_hour_ago = now_ms - 3600 * 1000;
+
+        let result = format_time_compact(one_hour_ago);
+        assert_eq!(result, "1h");
+    }
+}

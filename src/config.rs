@@ -248,3 +248,48 @@ auto_clean = {}
     debug!("Loaded config from {}", path.display());
     Ok(config)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_config_default_values() {
+        let config = Config::default();
+        assert_eq!(config.metadata_storage, "global");
+        assert!(!config.auto_detect_continuations);
+        assert!(config.auto_clean);
+        assert!(config.index.auto_update);
+    }
+
+    #[test]
+    fn test_config_parse_minimal() {
+        let content = r#"metadata_storage = "global""#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.metadata_storage, "global");
+        // Defaults should apply
+        assert!(!config.auto_detect_continuations);
+        assert!(config.auto_clean);
+    }
+
+    #[test]
+    fn test_config_parse_full() {
+        let content = r#"
+metadata_storage = "custom"
+custom_path = "/my/path.db"
+auto_detect_continuations = true
+auto_clean = false
+
+[index]
+auto_update = false
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.metadata_storage, "custom");
+        assert_eq!(config.custom_path, Some("/my/path.db".to_string()));
+        assert!(config.auto_detect_continuations);
+        assert!(!config.auto_clean);
+        assert!(!config.index.auto_update);
+    }
+}
