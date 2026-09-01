@@ -35,7 +35,7 @@ pub fn session_context(
 
     // Build session list from cache, sorted by updated_at DESC
     let mut sessions: Vec<Session> = cache.values().map(Session::from).collect();
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
     let mut meta = db.load_all_metadata()?;
     let config = load_config()?;

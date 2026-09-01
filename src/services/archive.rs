@@ -55,7 +55,7 @@ pub fn archive_session(
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let new_archive = NewArchive {
@@ -240,7 +240,7 @@ pub fn index_session(
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let new_archive = NewArchive {

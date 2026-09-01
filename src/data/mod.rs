@@ -12,6 +12,7 @@ pub use ksm_database::KsmDatabase;
 
 use crate::error::Result;
 use crate::models::{ConversationData, Session, SourceType};
+use log::warn;
 
 /// Read/write access to kiro-cli's session data.
 ///
@@ -112,8 +113,8 @@ impl SessionSource for HybridSource {
         let mut sessions = match self.database.list_sessions() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("⚠ Database access failed: {}", e);
-                eprintln!("⚠ Falling back to CLI parsing...\n");
+                warn!("Database access failed: {}", e);
+                warn!("Falling back to CLI parsing");
                 self.cli_fallback.list_sessions()?
             }
         };
@@ -123,7 +124,7 @@ impl SessionSource for HybridSource {
             sessions.extend(acp_sessions);
         }
 
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         Ok(sessions)
     }
 

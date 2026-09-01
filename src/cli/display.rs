@@ -13,7 +13,7 @@ use crate::models::{Archive, Chunk, SearchResult, Session, SessionMetadata, Sour
 pub fn format_time_compact(timestamp_ms: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let diff_secs = (now - timestamp_ms) / 1000;
@@ -53,7 +53,7 @@ pub fn format_time_compact(timestamp_ms: i64) -> String {
 pub fn format_time_ago(timestamp_ms: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let diff_ms = now - timestamp_ms;

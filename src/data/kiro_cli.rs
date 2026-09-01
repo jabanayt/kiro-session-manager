@@ -33,7 +33,7 @@ impl KiroCliSource {
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_millis() as i64;
 
         let sessions: Vec<Session> = re

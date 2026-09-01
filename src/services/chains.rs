@@ -258,7 +258,9 @@ pub fn link_sessions(
         db.set_metadata(child_id, child_meta)?;
     }
 
-    let child_metadata = metadata.get(child_id).unwrap();
+    let child_metadata = metadata
+        .get(child_id)
+        .expect("child metadata was just inserted by apply_link");
     Ok(LinkResult {
         child_id: child_id.to_string(),
         parent_id: parent_id.to_string(),
