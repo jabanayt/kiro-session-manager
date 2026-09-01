@@ -171,7 +171,18 @@ pub enum Commands {
 /// Main CLI dispatch. Called from main.rs.
 pub fn run(cli: Cli) -> Result<()> {
     let source = HybridSource::new();
-    let db = KsmDatabase::from_config().context("Failed to initialise database")?;
+    let (db, db_warnings) = KsmDatabase::from_config().context("Failed to initialise database")?;
+
+    // Show database warnings as notices
+    for warning in &db_warnings {
+        print!(
+            "{}",
+            crate::cli::notices::render_notices(&[crate::cli::notices::Notice::warning(
+                "Database Warning",
+                vec![warning.clone()],
+            )])
+        );
+    }
 
     // TODO(0.3.0): Remove JSON migration - all users should be on SQLite by then
     // One-time migration from JSON (idempotent -- skips if JSON doesn't exist
@@ -188,8 +199,16 @@ pub fn run(cli: Cli) -> Result<()> {
             }
             Ok(_) => {} // No JSON file or empty, silent
             Err(e) => {
-                eprintln!("⚠ Warning: Failed to migrate from JSON: {}", e);
-                eprintln!("⚠ Continuing with empty metadata store");
+                print!(
+                    "{}",
+                    crate::cli::notices::render_notices(&[crate::cli::notices::Notice::warning(
+                        "JSON Migration Failed",
+                        vec![
+                            format!("Failed to migrate from JSON: {}", e),
+                            "Continuing with empty metadata store".to_string(),
+                        ],
+                    )])
+                );
             }
         }
     }
@@ -197,12 +216,20 @@ pub fn run(cli: Cli) -> Result<()> {
     // Process any pending reindex from previous session
     let reindex_result = archive::process_pending_reindex(&source, &db)?;
     if let Some(warning) = reindex_result.warning {
-        eprintln!(
-            "⚠ Failed to update search index for \"{}\": {}",
-            reindex_result.session_name.unwrap_or_default(),
-            warning
+        print!(
+            "{}",
+            crate::cli::notices::render_notices(&[crate::cli::notices::Notice::warning(
+                "Search Index Update Failed",
+                vec![
+                    format!(
+                        "Failed to update search index for \"{}\": {}",
+                        reindex_result.session_name.unwrap_or_default(),
+                        warning
+                    ),
+                    "Run 'ksm reindex' to retry".to_string(),
+                ],
+            )])
         );
-        eprintln!("  Run 'ksm reindex' to retry");
     }
 
     let directory = std::env::current_dir()
@@ -815,11 +842,11 @@ fn cmd_detect_links(
         let child_idx = all_sessions
             .iter()
             .position(|s| s.id == candidate.child.id)
-            .unwrap();
+            .expect("candidate child session present in all_sessions");
         let parent_idx = all_sessions
             .iter()
             .position(|s| s.id == candidate.parent_id)
-            .unwrap();
+            .expect("candidate parent session present in all_sessions");
         let parent = &all_sessions[parent_idx];
 
         let child_name = meta
@@ -905,17 +932,24 @@ fn cmd_archive(
             .filter(|t| metadata::validate_tag(t).is_err())
             .collect();
         if !invalid.is_empty() {
-            eprintln!(
-                "Error: Session [{}] has invalid tags that must be fixed before archiving:",
+            let mut lines = vec![format!(
+                "Session [{}] has invalid tags that must be fixed before archiving:",
                 index
-            );
+            )];
             for tag in &invalid {
-                eprintln!("  {}", styles::tags(&[(*tag).clone()]));
+                lines.push(format!("  {}", styles::tags(&[(*tag).clone()])));
             }
-            eprintln!("{}", metadata::TAG_RULES);
-            eprintln!(
+            lines.push(metadata::TAG_RULES.to_string());
+            lines.push(format!(
                 "Remove with: {}",
                 styles::hint(&format!("ksm untag {} \"tag\"", index))
+            ));
+            print!(
+                "{}",
+                crate::cli::notices::render_notices(&[crate::cli::notices::Notice::error(
+                    "Invalid Tags",
+                    lines,
+                )])
             );
             anyhow::bail!("Fix invalid tags before archiving.");
         }
@@ -997,17 +1031,24 @@ fn cmd_index(
             .filter(|t| metadata::validate_tag(t).is_err())
             .collect();
         if !invalid.is_empty() {
-            eprintln!(
-                "Error: Session [{}] has invalid tags that must be fixed before archiving:",
+            let mut lines = vec![format!(
+                "Session [{}] has invalid tags that must be fixed before archiving:",
                 index
-            );
+            )];
             for tag in &invalid {
-                eprintln!("  {}", styles::tags(&[(*tag).clone()]));
+                lines.push(format!("  {}", styles::tags(&[(*tag).clone()])));
             }
-            eprintln!("{}", metadata::TAG_RULES);
-            eprintln!(
+            lines.push(metadata::TAG_RULES.to_string());
+            lines.push(format!(
                 "Remove with: {}",
                 styles::hint(&format!("ksm untag {} \"tag\"", index))
+            ));
+            print!(
+                "{}",
+                crate::cli::notices::render_notices(&[crate::cli::notices::Notice::error(
+                    "Invalid Tags",
+                    lines,
+                )])
             );
             anyhow::bail!("Fix invalid tags before archiving.");
         }
@@ -1115,11 +1156,15 @@ fn cmd_reindex(
 
         // Print warnings for any failures
         for r in results.iter().filter(|r| r.error.is_some()) {
-            eprintln!(
-                "⚠ Failed to reindex \"{}\": {}",
-                r.name,
-                r.error.as_ref().unwrap()
-            );
+            if let Some(error) = r.error.as_ref() {
+                print!(
+                    "{}",
+                    crate::cli::notices::render_notices(&[crate::cli::notices::Notice::warning(
+                        "Reindex Failed",
+                        vec![format!("Failed to reindex \"{}\": {}", r.name, error)],
+                    )])
+                );
+            }
         }
 
         let updated: Vec<_> = results.iter().filter(|r| r.updated).collect();
@@ -1138,7 +1183,7 @@ fn cmd_reindex(
                 );
             }
             if !failed.is_empty() {
-                eprintln!("\n{} session(s) failed to reindex.", failed.len());
+                println!("\n{} session(s) failed to reindex.", failed.len());
             }
             if !updated.is_empty() {
                 println!(
@@ -1500,7 +1545,7 @@ fn cmd_show_archive(
 fn cmd_compare_methods() -> Result<()> {
     use crate::data::{KiroCliSource, KiroDatabase};
 
-    eprintln!("=== Comparing Database vs CLI Methods ===\n");
+    println!("=== Comparing Database vs CLI Methods ===\n");
 
     let db_source = KiroDatabase::new();
     let cli_source = KiroCliSource::new();
@@ -1508,34 +1553,40 @@ fn cmd_compare_methods() -> Result<()> {
     let result = match sessions::compare_sources(&db_source, &cli_source) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Comparison failed: {}", e);
+            print!(
+                "{}",
+                crate::cli::notices::render_notices(&[crate::cli::notices::Notice::error(
+                    "Comparison Failed",
+                    vec![format!("{}", e)],
+                )])
+            );
             return Ok(());
         }
     };
 
-    eprintln!("Database: {} sessions", result.source_a_count);
-    eprintln!("CLI: {} sessions\n", result.source_b_count);
+    println!("Database: {} sessions", result.source_a_count);
+    println!("CLI: {} sessions\n", result.source_b_count);
 
     if result.source_a_count != result.source_b_count {
-        eprintln!(
+        println!(
             "Session count mismatch: DB={}, CLI={}\n",
             result.source_a_count, result.source_b_count
         );
     }
 
     if result.differences.is_empty() {
-        eprintln!("All sessions match! Database method is accurate.");
+        println!("All sessions match! Database method is accurate.");
     } else {
         let mut current_idx = None;
         for diff in &result.differences {
             if current_idx != Some(diff.index) {
                 if current_idx.is_some() {
-                    eprintln!();
+                    println!();
                 }
-                eprintln!("Session [{}] differences:", diff.index);
+                println!("Session [{}] differences:", diff.index);
                 current_idx = Some(diff.index);
             }
-            eprintln!(
+            println!(
                 "  {}: DB='{}' vs CLI='{}'",
                 diff.field, diff.source_a, diff.source_b
             );
@@ -1546,7 +1597,7 @@ fn cmd_compare_methods() -> Result<()> {
             .map(|d| d.index)
             .collect::<std::collections::HashSet<_>>()
             .len();
-        eprintln!("\nFound differences in {} session(s)", session_count);
+        println!("\nFound differences in {} session(s)", session_count);
     }
 
     Ok(())

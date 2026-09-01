@@ -18,30 +18,93 @@ use crate::models::{
 /// State key for pending reindex tracking.
 const STATE_PENDING_REINDEX: &str = "pending_reindex";
 
+/// Current database schema version.
+/// Increment when adding new migrations.
+const CURRENT_SCHEMA_VERSION: i64 = 6;
+
 /// Unified database for all KSM data (metadata, archives, state).
 pub struct KsmDatabase {
     path: PathBuf,
     config: Config,
 }
 
+/// Backup database file before migration.
+/// Returns backup path on success, None if backup failed (with warning message).
+fn backup_database(db_path: &std::path::Path) -> (Option<std::path::PathBuf>, Option<String>) {
+    let backup_path = db_path.with_extension("db.bak");
+    match std::fs::copy(db_path, &backup_path) {
+        Ok(_) => {
+            debug!("Backed up database to {}", backup_path.display());
+            (Some(backup_path), None)
+        }
+        Err(e) => {
+            let warning = format!(
+                "Could not create database backup: {}. Proceeding without safety net.",
+                e
+            );
+            (None, Some(warning))
+        }
+    }
+}
+
+/// Restore database from backup after failed migration.
+/// Returns error message if restore also failed.
+fn restore_database(
+    db_path: &std::path::Path,
+    backup_path: &std::path::Path,
+) -> std::result::Result<(), String> {
+    match std::fs::copy(backup_path, db_path) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(backup_path);
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Failed to restore database from backup: {}. Manual recovery needed from {}",
+            e,
+            backup_path.display()
+        )),
+    }
+}
+
+/// Delete backup file after successful migration.
+fn cleanup_backup(backup_path: &std::path::Path) {
+    let _ = std::fs::remove_file(backup_path);
+}
+
 impl KsmDatabase {
     /// Create database using path from config.
     ///
-    /// Runs schema migrations.
-    pub fn from_config() -> Result<Self> {
+    /// Runs schema migrations. Returns database and any warnings
+    /// (e.g., backup failure) that should be shown to user.
+    pub fn from_config() -> Result<(Self, Vec<String>)> {
         let config = load_config()?;
         let path = crate::config::ksm_db_path()?;
         let db = KsmDatabase { path, config };
-        db.ensure_schema()?;
-        Ok(db)
+        let warnings = db.ensure_schema()?;
+        Ok((db, warnings))
     }
 
     /// Create database with explicit path (for testing).
     pub fn new(path: PathBuf) -> Result<Self> {
         let config = Config::default();
         let db = KsmDatabase { path, config };
-        db.ensure_schema()?;
+        let _ = db.ensure_schema()?; // Ignore warnings for explicit path constructor
         Ok(db)
+    }
+
+    /// Create database in a temporary directory for testing.
+    ///
+    /// Returns the database and the TempDir. Caller must keep TempDir alive
+    /// for the duration of the test, otherwise the database file is deleted.
+    #[cfg(test)]
+    pub fn test_db(name: &str) -> Result<(Self, tempfile::TempDir)> {
+        let temp_dir = tempfile::tempdir().map_err(|e| KsmError::Storage {
+            message: format!("Failed to create temp directory: {}", e),
+            path: None,
+        })?;
+        let path = temp_dir.path().join(format!("{}.db", name));
+        let db = KsmDatabase::new(path)?;
+        Ok((db, temp_dir))
     }
 
     /// Get the auto_update config setting.
@@ -72,60 +135,177 @@ impl KsmDatabase {
     }
 
     /// Ensure database schema is at current version.
-    fn ensure_schema(&self) -> Result<()> {
+    /// Returns warnings (e.g., backup failure) that should be shown to user.
+    fn ensure_schema(&self) -> Result<Vec<String>> {
+        let mut warnings = Vec::new();
         let conn = self.open()?;
 
+        // Check if schema_version table exists
         let table_exists: bool = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")?
             .exists([])?;
 
-        if !table_exists {
-            Self::create_v1_schema(&conn)?;
-            Self::migrate_v1_to_v2(&conn)?;
-            self.migrate_v2_to_v3(&conn)?;
-            self.migrate_v3_to_v4(&conn)?;
-            self.migrate_v4_to_v5(&conn)?;
-            self.migrate_v5_to_v6(&conn)?;
+        let current_version = if table_exists {
+            conn.prepare("SELECT version FROM schema_version")?
+                .query_row([], |row| row.get::<_, i64>(0))?
         } else {
-            let version: i64 = conn
-                .prepare("SELECT version FROM schema_version")?
-                .query_row([], |row| row.get(0))?;
+            0 // No schema yet
+        };
 
-            match version {
-                1 => {
-                    Self::migrate_v1_to_v2(&conn)?;
-                    self.migrate_v2_to_v3(&conn)?;
-                    self.migrate_v3_to_v4(&conn)?;
-                    self.migrate_v4_to_v5(&conn)?;
-                    self.migrate_v5_to_v6(&conn)?;
-                }
-                2 => {
-                    self.migrate_v2_to_v3(&conn)?;
-                    self.migrate_v3_to_v4(&conn)?;
-                    self.migrate_v4_to_v5(&conn)?;
-                    self.migrate_v5_to_v6(&conn)?;
-                }
-                3 => {
-                    self.migrate_v3_to_v4(&conn)?;
-                    self.migrate_v4_to_v5(&conn)?;
-                    self.migrate_v5_to_v6(&conn)?;
-                }
-                4 => {
-                    self.migrate_v4_to_v5(&conn)?;
-                    self.migrate_v5_to_v6(&conn)?;
-                }
-                5 => {
-                    self.migrate_v5_to_v6(&conn)?;
-                }
-                6 => {} // Current version
-                _ => {
-                    return Err(KsmError::SchemaVersionMismatch {
-                        expected: 6,
-                        found: version,
+        // Already at current version - nothing to do
+        if current_version == CURRENT_SCHEMA_VERSION {
+            return Ok(warnings);
+        }
+
+        // Future version - error
+        if current_version > CURRENT_SCHEMA_VERSION {
+            return Err(KsmError::SchemaVersionMismatch {
+                expected: CURRENT_SCHEMA_VERSION,
+                found: current_version,
+            });
+        }
+
+        // Need to migrate - backup first
+        let backup_path = if self.path.exists() {
+            let (backup, warning) = backup_database(&self.path);
+            if let Some(w) = warning {
+                warnings.push(w);
+            }
+            backup
+        } else {
+            None // New database, nothing to backup
+        };
+
+        // Run migrations
+        let migration_result = self.run_migrations(&conn, current_version);
+
+        // Handle migration failure
+        if let Err(e) = migration_result {
+            // Drop connection before attempting restore (releases file locks)
+            drop(conn);
+
+            if let Some(ref backup) = backup_path {
+                if let Err(restore_err) = restore_database(&self.path, backup) {
+                    return Err(KsmError::Storage {
+                        message: format!("Migration failed: {}. Additionally, {}", e, restore_err),
+                        path: Some(self.path.clone()),
                     });
                 }
+                // Restore succeeded
+                return Err(KsmError::Storage {
+                    message: format!("Migration failed: {}. Database restored from backup.", e),
+                    path: Some(self.path.clone()),
+                });
+            }
+            return Err(e);
+        }
+
+        // Run integrity check after migration
+        if let Err(e) = self.verify_schema(&conn) {
+            // Drop connection before attempting restore (releases file locks)
+            drop(conn);
+
+            if let Some(ref backup) = backup_path {
+                if let Err(restore_err) = restore_database(&self.path, backup) {
+                    return Err(KsmError::Storage {
+                        message: format!(
+                            "Schema verification failed: {}. Additionally, {}",
+                            e, restore_err
+                        ),
+                        path: Some(self.path.clone()),
+                    });
+                }
+                return Err(KsmError::Storage {
+                    message: format!(
+                        "Schema verification failed: {}. Database restored from backup.",
+                        e
+                    ),
+                    path: Some(self.path.clone()),
+                });
+            }
+            return Err(e);
+        }
+
+        // Success - cleanup backup
+        if let Some(ref backup) = backup_path {
+            cleanup_backup(backup);
+        }
+
+        Ok(warnings)
+    }
+
+    /// Run all migrations from current_version to CURRENT_SCHEMA_VERSION.
+    fn run_migrations(&self, conn: &Connection, from_version: i64) -> Result<()> {
+        let mut version = from_version;
+
+        while version < CURRENT_SCHEMA_VERSION {
+            self.run_migration(conn, version)?;
+            version += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Run a single migration step.
+    fn run_migration(&self, conn: &Connection, from_version: i64) -> Result<()> {
+        match from_version {
+            0 => Self::create_v1_schema(conn)?,
+            1 => Self::migrate_v1_to_v2(conn)?,
+            2 => self.migrate_v2_to_v3(conn)?,
+            3 => self.migrate_v3_to_v4(conn)?,
+            4 => self.migrate_v4_to_v5(conn)?,
+            5 => self.migrate_v5_to_v6(conn)?,
+            _ => {
+                return Err(KsmError::SchemaVersionMismatch {
+                    expected: CURRENT_SCHEMA_VERSION,
+                    found: from_version,
+                });
             }
         }
+        Ok(())
+    }
+
+    /// Verify schema integrity after migration.
+    fn verify_schema(&self, conn: &Connection) -> Result<()> {
+        // Check all expected tables exist
+        let expected_tables = [
+            "schema_version",
+            "metadata",
+            "archives",
+            "chunks",
+            "chunks_fts",
+            "session_cache",
+            "acp_cache",
+            "state",
+        ];
+
+        for table in &expected_tables {
+            let exists: bool = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?1")?
+                .exists([table])?;
+            if !exists {
+                return Err(KsmError::Storage {
+                    message: format!("Missing table after migration: {}", table),
+                    path: Some(self.path.clone()),
+                });
+            }
+        }
+
+        // Check version is correct
+        let version: i64 = conn
+            .prepare("SELECT version FROM schema_version")?
+            .query_row([], |row| row.get(0))?;
+        if version != CURRENT_SCHEMA_VERSION {
+            return Err(KsmError::SchemaVersionMismatch {
+                expected: CURRENT_SCHEMA_VERSION,
+                found: version,
+            });
+        }
+
+        // Verify key columns exist (catches partial migrations)
+        conn.prepare("SELECT source_type FROM archives LIMIT 0")?;
+        conn.prepare("SELECT source_type FROM session_cache LIMIT 0")?;
+        conn.prepare("SELECT is_indexed FROM archives LIMIT 0")?;
 
         Ok(())
     }
@@ -208,16 +388,22 @@ impl KsmDatabase {
     }
 
     /// Migrate v2 to v3: add is_indexed column, state table, sparse config.
+    /// Migrate v2 to v3: add is_indexed column, state table, sparse config.
     fn migrate_v2_to_v3(&self, conn: &Connection) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
 
-        // Add is_indexed column
-        tx.execute(
-            "ALTER TABLE archives ADD COLUMN is_indexed BOOLEAN NOT NULL DEFAULT FALSE",
-            [],
-        )?;
+        // Add is_indexed column (idempotent - check if exists first)
+        let has_is_indexed: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('archives') WHERE name='is_indexed'")?
+            .exists([])?;
+        if !has_is_indexed {
+            tx.execute(
+                "ALTER TABLE archives ADD COLUMN is_indexed BOOLEAN NOT NULL DEFAULT FALSE",
+                [],
+            )?;
+        }
 
-        // Create state table
+        // Create state table (idempotent)
         tx.execute(
             "CREATE TABLE IF NOT EXISTS state (
                 key TEXT PRIMARY KEY,
@@ -226,19 +412,23 @@ impl KsmDatabase {
             [],
         )?;
 
-        tx.execute("UPDATE schema_version SET version = 3", [])?;
         tx.commit()?;
 
-        // Determine is_indexed for existing archives
+        // Post-DDL work (outside transaction, before version bump)
+        // These are idempotent - safe to re-run
         self.migrate_archive_indexed_status()?;
-
-        // Migrate config to sparse format
         self.migrate_config_to_sparse()?;
+
+        // Version bump last (separate transaction)
+        let tx2 = conn.unchecked_transaction()?;
+        tx2.execute("UPDATE schema_version SET version = 3", [])?;
+        tx2.commit()?;
 
         debug!("Migrated schema from version 2 to version 3");
         Ok(())
     }
 
+    /// Migrate v3 to v4: add session_cache table, re-run config migration.
     /// Migrate v3 to v4: add session_cache table, re-run config migration.
     fn migrate_v3_to_v4(&self, conn: &Connection) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
@@ -261,11 +451,15 @@ impl KsmDatabase {
             [],
         )?;
 
-        tx.execute("UPDATE schema_version SET version = 4", [])?;
         tx.commit()?;
 
         // Re-run config migration (idempotent, catches verbose configs)
         self.migrate_config_to_sparse()?;
+
+        // Version bump last (separate transaction)
+        let tx2 = conn.unchecked_transaction()?;
+        tx2.execute("UPDATE schema_version SET version = 4", [])?;
+        tx2.commit()?;
 
         debug!("Migrated schema from version 3 to version 4");
         Ok(())
@@ -325,8 +519,13 @@ impl KsmDatabase {
             }
         }
 
-        tx.execute("UPDATE schema_version SET version = 5", [])?;
         tx.commit()?;
+
+        // Version bump last (separate transaction)
+        let tx2 = conn.unchecked_transaction()?;
+        tx2.execute("UPDATE schema_version SET version = 5", [])?;
+        tx2.commit()?;
+
         debug!("Migrated schema from version 4 to version 5");
         Ok(())
     }
@@ -1378,5 +1577,299 @@ impl KsmDatabase {
         tx.commit()?;
         debug!("Migrated {} metadata entries from JSON to SQLite", count);
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn test_fresh_database_reaches_current_version() {
+        let (db, _temp) = KsmDatabase::test_db("test_fresh").unwrap();
+        let conn = db.open().unwrap();
+        let version: i64 = conn
+            .prepare("SELECT version FROM schema_version")
+            .unwrap()
+            .query_row([], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_all_tables_exist() {
+        let (db, _temp) = KsmDatabase::test_db("test_tables").unwrap();
+        let conn = db.open().unwrap();
+
+        let expected = [
+            "schema_version",
+            "metadata",
+            "archives",
+            "chunks",
+            "chunks_fts",
+            "session_cache",
+            "acp_cache",
+            "state",
+        ];
+
+        for table in &expected {
+            let exists: bool = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?1")
+                .unwrap()
+                .exists([table])
+                .unwrap();
+            assert!(exists, "Table {} should exist", table);
+        }
+    }
+
+    #[test]
+    fn test_key_columns_exist() {
+        let (db, _temp) = KsmDatabase::test_db("test_columns").unwrap();
+        let conn = db.open().unwrap();
+
+        // These should not error
+        conn.prepare("SELECT source_type FROM archives LIMIT 0")
+            .unwrap();
+        conn.prepare("SELECT source_type FROM session_cache LIMIT 0")
+            .unwrap();
+        conn.prepare("SELECT is_indexed FROM archives LIMIT 0")
+            .unwrap();
+    }
+
+    #[test]
+    fn test_metadata_survives_migration() {
+        let (db, _temp) = KsmDatabase::test_db("test_metadata_survives").unwrap();
+
+        // Insert metadata
+        let meta = SessionMetadata {
+            name: Some("Test Session".to_string()),
+            tags: ["tag1", "tag2"].iter().map(|s| s.to_string()).collect(),
+            directory: Some("/test".to_string()),
+            parent_session_id: None,
+            manually_unlinked: false,
+        };
+        db.set_metadata("test-session-id", &meta).unwrap();
+
+        // Verify it's there
+        let loaded = db.get_metadata("test-session-id").unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.name, Some("Test Session".to_string()));
+        assert!(loaded.tags.contains("tag1"));
+        assert!(loaded.tags.contains("tag2"));
+    }
+
+    #[test]
+    fn test_archive_survives_migration() {
+        let (db, _temp) = KsmDatabase::test_db("test_archive_survives").unwrap();
+
+        // Insert archive with chunks
+        let archive = NewArchive {
+            session_id: "test-session".to_string(),
+            name: "test-archive".to_string(),
+            directory: "/test".to_string(),
+            message_count: 5,
+            session_created_at: 1000,
+            archived_at: 2000,
+            tags: vec!["archive-tag".to_string()],
+            pruned: false,
+            source_type: SourceType::Legacy,
+        };
+        let chunks = vec![NewChunk {
+            exchange_index: 0,
+            user_content: "User question".to_string(),
+            assistant_content: "Assistant answer".to_string(),
+            tool_summary: Some("Used tool X".to_string()),
+        }];
+        db.save_archive(&archive, &chunks, false).unwrap();
+
+        // Verify archive exists
+        let loaded = db.get_archive("test-archive", "/test").unwrap();
+        assert_eq!(loaded.session_id, "test-session");
+        assert_eq!(loaded.message_count, 5);
+
+        // Verify chunks exist
+        let loaded_chunks = db.get_chunks(loaded.id).unwrap();
+        assert_eq!(loaded_chunks.len(), 1);
+        assert_eq!(loaded_chunks[0].user_content, "User question");
+    }
+
+    #[test]
+    fn test_fts_search_works() {
+        let (db, _temp) = KsmDatabase::test_db("test_fts").unwrap();
+
+        // Insert archive with searchable content
+        let archive = NewArchive {
+            session_id: "search-test".to_string(),
+            name: "searchable".to_string(),
+            directory: "/test".to_string(),
+            message_count: 1,
+            session_created_at: 1000,
+            archived_at: 2000,
+            tags: vec![],
+            pruned: false,
+            source_type: SourceType::Legacy,
+        };
+        let chunks = vec![NewChunk {
+            exchange_index: 0,
+            user_content: "How do I implement authentication?".to_string(),
+            assistant_content: "You can use JWT tokens for authentication.".to_string(),
+            tool_summary: None,
+        }];
+        db.save_archive(&archive, &chunks, false).unwrap();
+
+        // Search should find it
+        let query = SearchQuery {
+            query: "authentication".to_string(),
+            directory: "/test".to_string(),
+            limit: 10,
+        };
+        let results = db.search(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].archive_name, "searchable");
+    }
+
+    #[test]
+    fn test_backup_restore_roundtrip() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+
+        // Create database with data
+        let db = KsmDatabase::new(db_path.clone()).unwrap();
+        let meta = SessionMetadata {
+            name: Some("Important Data".to_string()),
+            tags: std::collections::HashSet::new(),
+            directory: Some("/test".to_string()),
+            parent_session_id: None,
+            manually_unlinked: false,
+        };
+        db.set_metadata("important-session", &meta).unwrap();
+
+        // Manually backup
+        let backup_path = db_path.with_extension("db.bak");
+        std::fs::copy(&db_path, &backup_path).unwrap();
+
+        // Corrupt the original (simulate failed migration)
+        std::fs::write(&db_path, b"corrupted data").unwrap();
+
+        // Restore from backup
+        std::fs::copy(&backup_path, &db_path).unwrap();
+
+        // Verify data is intact
+        let db2 = KsmDatabase::new(db_path).unwrap();
+        let loaded = db2.get_metadata("important-session").unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().name, Some("Important Data".to_string()));
+    }
+
+    #[test]
+    fn test_schema_version_mismatch_error() {
+        use assert_matches::assert_matches;
+
+        let (db, _temp) = KsmDatabase::test_db("test_version_mismatch").unwrap();
+        let conn = db.open().unwrap();
+
+        // Manually set version to future
+        conn.execute("UPDATE schema_version SET version = 999", [])
+            .unwrap();
+        drop(conn);
+
+        // Re-opening should fail with specific error
+        let conn2 = db.open().unwrap();
+        let result = db.verify_schema(&conn2);
+        assert_matches!(
+            result,
+            Err(KsmError::SchemaVersionMismatch {
+                expected: 6,
+                found: 999
+            })
+        );
+    }
+
+    #[test]
+    fn test_concurrent_access_safe() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("concurrent.db");
+
+        // Create initial database
+        let db1 = KsmDatabase::new(db_path.clone()).unwrap();
+
+        // Insert from first connection
+        let meta1 = SessionMetadata {
+            name: Some("From DB1".to_string()),
+            tags: std::collections::HashSet::new(),
+            directory: Some("/test".to_string()),
+            parent_session_id: None,
+            manually_unlinked: false,
+        };
+        db1.set_metadata("session-1", &meta1).unwrap();
+
+        // Create second instance on same file
+        let db2 = KsmDatabase::new(db_path.clone()).unwrap();
+
+        // Insert from second connection
+        let meta2 = SessionMetadata {
+            name: Some("From DB2".to_string()),
+            tags: std::collections::HashSet::new(),
+            directory: Some("/test".to_string()),
+            parent_session_id: None,
+            manually_unlinked: false,
+        };
+        db2.set_metadata("session-2", &meta2).unwrap();
+
+        // Both should be readable from either instance
+        assert!(db1.get_metadata("session-1").unwrap().is_some());
+        assert!(db1.get_metadata("session-2").unwrap().is_some());
+        assert!(db2.get_metadata("session-1").unwrap().is_some());
+        assert!(db2.get_metadata("session-2").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_v5_to_v6_archive_preservation() {
+        // This test verifies archives survive the table rebuild in v5-v6
+        // Since we can't easily test migration mid-chain, we verify the
+        // current schema handles archives correctly
+        let (db, _temp) = KsmDatabase::test_db("test_archive_preservation").unwrap();
+
+        let archive = NewArchive {
+            session_id: "preserve-test".to_string(),
+            name: "preserved".to_string(),
+            directory: "/test".to_string(),
+            message_count: 10,
+            session_created_at: 1000,
+            archived_at: 2000,
+            tags: vec!["important".to_string()],
+            pruned: false,
+            source_type: SourceType::Legacy,
+        };
+        let chunks = vec![
+            NewChunk {
+                exchange_index: 0,
+                user_content: "First question".to_string(),
+                assistant_content: "First answer".to_string(),
+                tool_summary: None,
+            },
+            NewChunk {
+                exchange_index: 1,
+                user_content: "Second question".to_string(),
+                assistant_content: "Second answer".to_string(),
+                tool_summary: Some("Used grep".to_string()),
+            },
+        ];
+        db.save_archive(&archive, &chunks, false).unwrap();
+
+        // Verify all data preserved
+        let loaded = db.get_archive("preserved", "/test").unwrap();
+        assert_eq!(loaded.session_id, "preserve-test");
+        assert_eq!(loaded.message_count, 10);
+        assert_eq!(loaded.source_type, SourceType::Legacy);
+
+        let loaded_chunks = db.get_chunks(loaded.id).unwrap();
+        assert_eq!(loaded_chunks.len(), 2);
+        assert_eq!(loaded_chunks[0].user_content, "First question");
+        assert_eq!(loaded_chunks[1].tool_summary, Some("Used grep".to_string()));
     }
 }

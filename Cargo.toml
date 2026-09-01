@@ -21,6 +21,10 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 libc = "0.2"
 unicode-width = "0.2"
 
+[dev-dependencies]
+tempfile = "3"
+assert_matches = "1"
+
 [lints.clippy]
 unwrap_used = "warn"
 print_stderr = "warn"

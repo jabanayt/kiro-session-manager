@@ -33,7 +33,7 @@ impl KiroCliSource {
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_millis() as i64;
 
         let sessions: Vec<Session> = re
@@ -158,5 +158,51 @@ impl SessionSource for KiroCliSource {
             )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_parse_time_ago_seconds() {
+        let now = 1000000;
+        assert_eq!(parse_time_ago_to_ms("30 seconds ago", now), 1000000 - 30000);
+        assert_eq!(parse_time_ago_to_ms("1 second ago", now), 1000000 - 1000);
+    }
+
+    #[test]
+    fn test_parse_time_ago_minutes() {
+        let now = 1000000;
+        assert_eq!(parse_time_ago_to_ms("5 minutes ago", now), 1000000 - 300000);
+        assert_eq!(parse_time_ago_to_ms("1 minute ago", now), 1000000 - 60000);
+    }
+
+    #[test]
+    fn test_parse_time_ago_hours() {
+        let now = 10000000;
+        assert_eq!(parse_time_ago_to_ms("2 hours ago", now), 10000000 - 7200000);
+        assert_eq!(parse_time_ago_to_ms("1 hour ago", now), 10000000 - 3600000);
+    }
+
+    #[test]
+    fn test_parse_time_ago_days() {
+        let now = 100000000;
+        assert_eq!(
+            parse_time_ago_to_ms("3 days ago", now),
+            100000000 - 259200000
+        );
+        assert_eq!(parse_time_ago_to_ms("1 day ago", now), 100000000 - 86400000);
+    }
+
+    #[test]
+    fn test_parse_time_ago_invalid_returns_now() {
+        let now = 1000000;
+        assert_eq!(parse_time_ago_to_ms("invalid", now), now);
+        assert_eq!(parse_time_ago_to_ms("", now), now);
+        assert_eq!(parse_time_ago_to_ms("xyz ago", now), now);
     }
 }

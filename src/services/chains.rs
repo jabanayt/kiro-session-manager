@@ -258,7 +258,9 @@ pub fn link_sessions(
         db.set_metadata(child_id, child_meta)?;
     }
 
-    let child_metadata = metadata.get(child_id).unwrap();
+    let child_metadata = metadata
+        .get(child_id)
+        .expect("child metadata was just inserted by apply_link");
     Ok(LinkResult {
         child_id: child_id.to_string(),
         parent_id: parent_id.to_string(),
@@ -440,4 +442,110 @@ pub fn auto_link_continuations(
     }
 
     Ok(candidates.len())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::models::{CachedSession, Session, SourceType};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_find_potential_parents_by_message_id() {
+        let child_id = "child-session";
+        let parent_id = "parent-session";
+
+        let mut cache: HashMap<(String, SourceType), CachedSession> = HashMap::new();
+
+        // Parent has message IDs
+        cache.insert(
+            (parent_id.to_string(), SourceType::Legacy),
+            CachedSession {
+                session_id: parent_id.to_string(),
+                directory: "/test".to_string(),
+                updated_at: 1000,
+                created_at: 500,
+                preview: "Parent".to_string(),
+                msg_count: 5,
+                has_compact_tag: false,
+                message_ids: vec!["msg-1".to_string(), "msg-2".to_string()],
+                source_type: SourceType::Legacy,
+            },
+        );
+
+        // Child shares message IDs with parent
+        cache.insert(
+            (child_id.to_string(), SourceType::Legacy),
+            CachedSession {
+                session_id: child_id.to_string(),
+                directory: "/test".to_string(),
+                updated_at: 2000,
+                created_at: 1500,
+                preview: "Child".to_string(),
+                msg_count: 3,
+                has_compact_tag: true,
+                message_ids: vec!["msg-1".to_string(), "msg-3".to_string()],
+                source_type: SourceType::Legacy,
+            },
+        );
+
+        let sessions = vec![
+            Session {
+                id: parent_id.to_string(),
+                created_at: 500,
+                updated_at: 1000,
+                preview: "Parent".to_string(),
+                msg_count: 5,
+                source_type: SourceType::Legacy,
+            },
+            Session {
+                id: child_id.to_string(),
+                created_at: 1500,
+                updated_at: 2000,
+                preview: "Child".to_string(),
+                msg_count: 3,
+                source_type: SourceType::Legacy,
+            },
+        ];
+
+        let result =
+            find_potential_parents(child_id, SourceType::Legacy, &sessions, &cache).unwrap();
+        assert_eq!(result, vec![parent_id]);
+    }
+
+    #[test]
+    fn test_find_potential_parents_no_match() {
+        let child_id = "child-session";
+
+        let mut cache: HashMap<(String, SourceType), CachedSession> = HashMap::new();
+        cache.insert(
+            (child_id.to_string(), SourceType::Legacy),
+            CachedSession {
+                session_id: child_id.to_string(),
+                directory: "/test".to_string(),
+                updated_at: 2000,
+                created_at: 1500,
+                preview: "Child".to_string(),
+                msg_count: 3,
+                has_compact_tag: true,
+                message_ids: vec!["msg-unique".to_string()],
+                source_type: SourceType::Legacy,
+            },
+        );
+
+        let sessions = vec![Session {
+            id: child_id.to_string(),
+            created_at: 1500,
+            updated_at: 2000,
+            preview: "Child".to_string(),
+            msg_count: 3,
+            source_type: SourceType::Legacy,
+        }];
+
+        let result =
+            find_potential_parents(child_id, SourceType::Legacy, &sessions, &cache).unwrap();
+        assert!(result.is_empty());
+    }
 }

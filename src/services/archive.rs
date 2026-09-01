@@ -55,7 +55,7 @@ pub fn archive_session(
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let new_archive = NewArchive {
@@ -240,7 +240,7 @@ pub fn index_session(
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time before UNIX epoch")
         .as_millis() as i64;
 
     let new_archive = NewArchive {
@@ -759,5 +759,230 @@ fn summarise_tool_call(tool_call: &ToolCall) -> String {
             format!("Knowledge: {}", command)
         }
         _ => format!("Used tool: {}", name),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_sanitize_fts_query_strips_punctuation() {
+        assert_eq!(sanitize_fts_query("hello.world"), "helloworld");
+        assert_eq!(sanitize_fts_query("test's"), "tests");
+        assert_eq!(sanitize_fts_query("(foo)"), "foo");
+        assert_eq!(sanitize_fts_query("[bar]"), "bar");
+        assert_eq!(sanitize_fts_query("{baz}"), "baz");
+    }
+
+    #[test]
+    fn test_sanitize_fts_query_converts_hyphens_to_spaces() {
+        assert_eq!(sanitize_fts_query("foo-bar"), "foo bar");
+        assert_eq!(sanitize_fts_query("multi-word-query"), "multi word query");
+    }
+
+    #[test]
+    fn test_sanitize_fts_query_preserves_alphanumeric() {
+        assert_eq!(sanitize_fts_query("hello123"), "hello123");
+        assert_eq!(sanitize_fts_query("UPPER lower"), "UPPER lower");
+    }
+
+    #[test]
+    fn test_clean_pruning_markers_removes_markers() {
+        assert_eq!(clean_pruning_markers("[Pruned] text"), "text");
+        assert_eq!(clean_pruning_markers("[pruned] text"), "text");
+        assert_eq!(clean_pruning_markers("text [Pruned]"), "text");
+        assert_eq!(clean_pruning_markers("[Pruned]"), "");
+    }
+
+    #[test]
+    fn test_clean_pruning_markers_trims_whitespace() {
+        assert_eq!(clean_pruning_markers("  hello  "), "hello");
+        assert_eq!(clean_pruning_markers("[Pruned]  text  "), "text");
+    }
+
+    #[test]
+    fn test_summarise_tool_call_fs_write() {
+        let tool_call = ToolCall {
+            id: String::new(),
+            name: "fs_write".to_string(),
+            args: serde_json::json!({
+                "command": "create",
+                "path": "/src/main.rs"
+            }),
+        };
+        assert_eq!(summarise_tool_call(&tool_call), "Created /src/main.rs");
+
+        let tool_call2 = ToolCall {
+            id: String::new(),
+            name: "fs_write".to_string(),
+            args: serde_json::json!({
+                "command": "str_replace",
+                "path": "/src/lib.rs"
+            }),
+        };
+        assert_eq!(
+            summarise_tool_call(&tool_call2),
+            "Modified /src/lib.rs (str_replace)"
+        );
+    }
+
+    #[test]
+    fn test_summarise_tool_call_execute_bash() {
+        let tool_call = ToolCall {
+            id: String::new(),
+            name: "execute_bash".to_string(),
+            args: serde_json::json!({
+                "command": "cargo build --release"
+            }),
+        };
+        assert_eq!(
+            summarise_tool_call(&tool_call),
+            "Ran: cargo build --release"
+        );
+    }
+
+    #[test]
+    fn test_summarise_tool_call_execute_bash_truncates() {
+        let long_command = "x".repeat(250);
+        let tool_call = ToolCall {
+            id: String::new(),
+            name: "execute_bash".to_string(),
+            args: serde_json::json!({
+                "command": long_command
+            }),
+        };
+        let result = summarise_tool_call(&tool_call);
+        assert!(result.starts_with("Ran: "));
+        assert!(result.ends_with("..."));
+        assert!(result.len() < 220); // 200 chars + "Ran: " + "..."
+    }
+
+    #[test]
+    fn test_summarise_tool_call_grep() {
+        let tool_call = ToolCall {
+            id: String::new(),
+            name: "grep".to_string(),
+            args: serde_json::json!({
+                "pattern": "TODO",
+                "path": "/src"
+            }),
+        };
+        assert_eq!(
+            summarise_tool_call(&tool_call),
+            "Searched for \"TODO\" in /src"
+        );
+    }
+
+    #[test]
+    fn test_summarise_tool_call_unknown() {
+        let tool_call = ToolCall {
+            id: String::new(),
+            name: "unknown_tool".to_string(),
+            args: serde_json::json!({}),
+        };
+        assert_eq!(summarise_tool_call(&tool_call), "Used tool: unknown_tool");
+    }
+
+    #[test]
+    fn test_is_pruned_detects_marker() {
+        use crate::models::{
+            ConversationData, HistoryEntry, ToolResult, ToolResultContent, ToolUseResultsContent,
+            UserContent, UserMessage,
+        };
+
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::ToolUseResults(ToolUseResultsContent {
+                        tool_use_results: vec![ToolResult {
+                            tool_use_id: String::new(),
+                            content: vec![ToolResultContent::Text("[Pruned]".to_string())],
+                            status: Default::default(),
+                        }],
+                    })),
+                    timestamp: None,
+                }),
+                assistant: None,
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+        assert!(is_pruned(&conv));
+    }
+
+    #[test]
+    fn test_is_pruned_no_marker() {
+        use crate::models::{
+            ConversationData, HistoryEntry, PromptContent, UserContent, UserMessage,
+        };
+
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::Prompt(PromptContent {
+                        prompt: "Hello".to_string(),
+                    })),
+                    timestamp: None,
+                }),
+                assistant: None,
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+        assert!(!is_pruned(&conv));
+    }
+
+    #[test]
+    fn test_extract_chunks_single_exchange() {
+        use crate::models::{
+            AssistantContent, ConversationData, HistoryEntry, PromptContent, ResponseContent,
+            UserContent, UserMessage,
+        };
+
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![HistoryEntry {
+                user: Some(UserMessage {
+                    content: Some(UserContent::Prompt(PromptContent {
+                        prompt: "Does kiro have proper session management yet?".to_string(),
+                    })),
+                    timestamp: None,
+                }),
+                assistant: Some(AssistantContent::Response(ResponseContent {
+                    message_id: None,
+                    content: "Still somehow no lol".to_string(),
+                })),
+                request_metadata: None,
+            }],
+            latest_summary: None,
+        };
+
+        let chunks = extract_chunks_from_conversation(&conv);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].exchange_index, 0);
+        assert_eq!(
+            chunks[0].user_content,
+            "Does kiro have proper session management yet?"
+        );
+        assert_eq!(chunks[0].assistant_content, "Still somehow no lol");
+    }
+
+    #[test]
+    fn test_extract_chunks_empty_conversation() {
+        use crate::models::ConversationData;
+
+        let conv = ConversationData {
+            conversation_id: "test".to_string(),
+            history: vec![],
+            latest_summary: None,
+        };
+
+        let chunks = extract_chunks_from_conversation(&conv);
+        assert!(chunks.is_empty());
     }
 }

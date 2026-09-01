@@ -175,3 +175,28 @@ pub fn render_notices(notices: &[Notice]) -> String {
 
     output
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_strip_ansi_removes_codes() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("\x1b[1mbold\x1b[0m"), "bold");
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_plain_text() {
+        assert_eq!(strip_ansi("plain text"), "plain text");
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn test_strip_ansi_complex() {
+        let input = "\x1b[38;5;196mcolored\x1b[0m normal \x1b[1mbold\x1b[0m";
+        assert_eq!(strip_ansi(input), "colored normal bold");
+    }
+}

@@ -281,3 +281,86 @@ pub fn get_chain_context(
         ordered_ids: ordered,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_validate_tag_normalizes_case() {
+        assert_eq!(validate_tag("UPPER").unwrap(), "upper");
+        assert_eq!(validate_tag("MixedCase").unwrap(), "mixedcase");
+    }
+
+    #[test]
+    fn test_validate_tag_trims_whitespace() {
+        assert_eq!(validate_tag("  tag  ").unwrap(), "tag");
+        assert_eq!(validate_tag("\ttab\t").unwrap(), "tab");
+    }
+
+    #[test]
+    fn test_validate_tag_allows_valid_chars() {
+        assert!(validate_tag("simple").is_ok());
+        assert!(validate_tag("with-hyphen").is_ok());
+        assert!(validate_tag("with_underscore").is_ok());
+        assert!(validate_tag("with.dot").is_ok());
+        assert!(validate_tag("with123numbers").is_ok());
+    }
+
+    #[test]
+    fn test_validate_tag_rejects_empty() {
+        use assert_matches::assert_matches;
+
+        assert_matches!(validate_tag(""), Err(KsmError::InvalidTag(_)));
+        assert_matches!(validate_tag("   "), Err(KsmError::InvalidTag(_)));
+    }
+
+    #[test]
+    fn test_validate_tag_rejects_too_long() {
+        use assert_matches::assert_matches;
+
+        let long_tag = "a".repeat(51);
+        assert_matches!(validate_tag(&long_tag), Err(KsmError::InvalidTag(_)));
+
+        let ok_tag = "a".repeat(50);
+        assert!(validate_tag(&ok_tag).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tag_rejects_special_chars() {
+        use assert_matches::assert_matches;
+
+        assert_matches!(validate_tag("has space"), Err(KsmError::InvalidTag(_)));
+        assert_matches!(validate_tag("has@symbol"), Err(KsmError::InvalidTag(_)));
+        assert_matches!(validate_tag("has/slash"), Err(KsmError::InvalidTag(_)));
+        assert_matches!(validate_tag("has:colon"), Err(KsmError::InvalidTag(_)));
+    }
+
+    #[test]
+    fn test_validate_tags_all_valid() {
+        let tags = vec!["tag1".to_string(), "tag2".to_string()];
+        let result = validate_tags(&tags).unwrap();
+        assert_eq!(result, vec!["tag1", "tag2"]);
+    }
+
+    #[test]
+    fn test_validate_tags_one_invalid() {
+        let tags = vec!["valid".to_string(), "in valid".to_string()];
+        assert!(validate_tags(&tags).is_err());
+    }
+
+    #[test]
+    fn test_resolve_scope_single() {
+        use crate::models::{Session, SessionMetadata};
+        use std::collections::HashMap;
+
+        let metadata: HashMap<String, SessionMetadata> = HashMap::new();
+        let sessions: Vec<Session> = vec![];
+        let scope = MetadataScope::Single("session-1".to_string());
+
+        let result = resolve_scope(&scope, &metadata, &sessions);
+        assert_eq!(result, vec!["session-1"]);
+    }
+}

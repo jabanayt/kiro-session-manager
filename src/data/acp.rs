@@ -331,7 +331,7 @@ impl SessionSource for AcpSource {
             });
         }
 
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         Ok(sessions)
     }
 
@@ -472,4 +472,137 @@ fn epoch_secs_to_ymd(secs: i64) -> (i64, i64, i64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_iso_to_ms_utc() {
+        // 2026-01-15T10:30:00Z
+        let result = iso_to_ms("2026-01-15T10:30:00Z").unwrap();
+        // Verify it's a reasonable timestamp (after 2020, before 2030)
+        assert!(result > 1577836800000); // 2020-01-01
+        assert!(result < 1893456000000); // 2030-01-01
+    }
+
+    #[test]
+    fn test_iso_to_ms_with_offset() {
+        // Should parse without error (offset is stripped)
+        let result = iso_to_ms("2026-01-15T10:30:00+12:00");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_iso_to_ms_with_fractional_seconds() {
+        let result = iso_to_ms("2026-01-15T10:30:00.123Z");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_iso_to_ms_invalid_format() {
+        assert!(iso_to_ms("not a date").is_err());
+        assert!(iso_to_ms("2026-01-15").is_err()); // Missing time
+        assert!(iso_to_ms("10:30:00Z").is_err()); // Missing date
+    }
+
+    #[test]
+    fn test_days_since_epoch() {
+        // 1970-01-01 should be day 0
+        assert_eq!(days_since_epoch(1970, 1, 1), 0);
+        // 1970-01-02 should be day 1
+        assert_eq!(days_since_epoch(1970, 1, 2), 1);
+    }
+
+    #[test]
+    fn test_extract_text_content_simple() {
+        let data = serde_json::json!({
+            "content": [
+                {"kind": "text", "data": "Hello "},
+                {"kind": "text", "data": "World"}
+            ]
+        });
+        assert_eq!(extract_text_content(&data), "Hello World");
+    }
+
+    #[test]
+    fn test_extract_text_content_filters_non_text() {
+        let data = serde_json::json!({
+            "content": [
+                {"kind": "text", "data": "Hello"},
+                {"kind": "image", "data": "base64..."},
+                {"kind": "text", "data": " World"}
+            ]
+        });
+        assert_eq!(extract_text_content(&data), "Hello World");
+    }
+
+    #[test]
+    fn test_extract_text_content_empty() {
+        let data = serde_json::json!({});
+        assert_eq!(extract_text_content(&data), "");
+
+        let data2 = serde_json::json!({"content": []});
+        assert_eq!(extract_text_content(&data2), "");
+    }
+
+    #[test]
+    fn test_extract_preview_uses_title() {
+        let preview = extract_preview(Some("My Title"), "");
+        assert_eq!(preview, "My Title");
+    }
+
+    #[test]
+    fn test_extract_preview_empty_title_falls_back() {
+        let jsonl =
+            r#"{"kind":"Prompt","data":{"content":[{"kind":"text","data":"First message"}]}}"#;
+        let preview = extract_preview(Some(""), jsonl);
+        assert_eq!(preview, "First message");
+    }
+
+    #[test]
+    fn test_extract_preview_no_content() {
+        let preview = extract_preview(None, "");
+        assert_eq!(preview, "[No preview available]");
+    }
+
+    #[test]
+    fn test_extract_message_ids_from_jsonl() {
+        let jsonl = r#"{"kind":"Prompt","data":{}}
+{"kind":"AssistantMessage","data":{"message_id":"msg-123"}}
+{"kind":"Prompt","data":{}}
+{"kind":"AssistantMessage","data":{"message_id":"msg-456"}}"#;
+
+        let ids = extract_message_ids_from_jsonl(jsonl);
+        assert_eq!(ids, vec!["msg-123", "msg-456"]);
+    }
+
+    #[test]
+    fn test_extract_message_ids_skips_non_assistant() {
+        let jsonl = r#"{"kind":"Prompt","data":{"message_id":"should-skip"}}
+{"kind":"AssistantMessage","data":{"message_id":"msg-123"}}"#;
+
+        let ids = extract_message_ids_from_jsonl(jsonl);
+        assert_eq!(ids, vec!["msg-123"]);
+    }
+
+    #[test]
+    fn test_parse_jsonl_single_exchange() {
+        let jsonl = r#"{"kind":"Prompt","data":{"content":[{"kind":"text","data":"Hello"}]}}
+{"kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"Hi there"}],"message_id":"msg-1"}}"#;
+
+        let conv = parse_jsonl("test-session", jsonl);
+        assert_eq!(conv.conversation_id, "test-session");
+        assert_eq!(conv.history.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_jsonl_empty() {
+        let conv = parse_jsonl("test-session", "");
+        assert_eq!(conv.conversation_id, "test-session");
+        assert!(conv.history.is_empty());
+    }
 }
